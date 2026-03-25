@@ -362,15 +362,9 @@ jobs:
             echo ""
             echo "## Installation"
             echo ""
-            echo "**Docker (recommended):**"
-            echo '```bash'
-            echo "docker pull rcourtman/pulse:${VERSION}"
-            echo '```'
+            echo "If you run Pulse via Docker or Compose, update to \`rcourtman/pulse:${VERSION}\`."
             echo ""
-            echo "**Docker Compose:**"
-            echo "Update your \`docker-compose.yml\` to use \`rcourtman/pulse:${VERSION}\`"
-            echo ""
-            echo "See the [Installation Guide](https://github.com/rcourtman/Pulse#installation) for complete setup instructions."
+            echo "See the [Installation Guide](https://github.com/rcourtman/Pulse#installation) for other deployment methods."
           } >> "$NOTES_FILE"
 
           echo "notes_file=${NOTES_FILE}" >> $GITHUB_OUTPUT
