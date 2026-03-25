@@ -12,6 +12,7 @@ import { AIAPI } from '@/api/ai';
 import { AIChatAPI, type ChatSession, type FileChange } from '@/api/aiChat';
 import { hasFeature, loadLicenseStatus } from '@/stores/license';
 import type { AISettings as AISettingsType, AIProvider, AuthMethod } from '@/types/ai';
+import { normalizeChatSessions } from '@/components/Settings/aiSettingsChatSessions';
 
 // Providers are now configured via accordion sections, not a single-provider selector
 
@@ -284,10 +285,10 @@ export const AISettings: Component = () => {
     setChatSessionsLoading(true);
     setChatSessionsError('');
     try {
-      const sessions = await AIChatAPI.listSessions();
+      const sessions = normalizeChatSessions(await AIChatAPI.listSessions());
       setChatSessions(sessions);
       const current = selectedSessionId();
-      if (!Array.isArray(sessions) || sessions.length === 0) {
+      if (sessions.length === 0) {
         setSelectedSessionId('');
       } else if (!current || !sessions.some((session) => session.id === current)) {
         setSelectedSessionId(sessions[0].id);
