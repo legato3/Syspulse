@@ -87,6 +87,9 @@ func findMatchingDockerHost(hosts []models.DockerHost, report agentsdocker.Repor
 
 			existingToken := strings.TrimSpace(host.TokenID)
 			if tokenID == "" || existingToken == tokenID {
+				if dockerHostIdentityConflicts(host, report) {
+					continue
+				}
 				return host, true
 			}
 		}
@@ -130,6 +133,41 @@ func findMatchingDockerHost(hosts []models.DockerHost, report agentsdocker.Repor
 	}
 
 	return models.DockerHost{}, false
+}
+
+// dockerHostIdentityConflicts reports whether an incoming report is clearly from
+// a different physical/swarm node than the existing Docker host record.
+func dockerHostIdentityConflicts(existing models.DockerHost, report agentsdocker.Report) bool {
+	existingMachineID := strings.TrimSpace(existing.MachineID)
+	reportMachineID := strings.TrimSpace(report.Host.MachineID)
+	if existingMachineID != "" && reportMachineID != "" && existingMachineID != reportMachineID {
+		return true
+	}
+
+	existingSwarmNodeID := ""
+	if existing.Swarm != nil {
+		existingSwarmNodeID = strings.TrimSpace(existing.Swarm.NodeID)
+	}
+	reportSwarmNodeID := ""
+	if report.Host.Swarm != nil {
+		reportSwarmNodeID = strings.TrimSpace(report.Host.Swarm.NodeID)
+	}
+	if existingSwarmNodeID != "" && reportSwarmNodeID != "" && existingSwarmNodeID != reportSwarmNodeID {
+		return true
+	}
+
+	// When we do not have stronger stable IDs, a hostname change is ambiguous
+	// and should not be treated as the same reporting host automatically.
+	existingHostname := strings.TrimSpace(existing.Hostname)
+	reportHostname := strings.TrimSpace(report.Host.Hostname)
+	if existingMachineID == "" && reportMachineID == "" &&
+		existingSwarmNodeID == "" && reportSwarmNodeID == "" &&
+		existingHostname != "" && reportHostname != "" &&
+		!strings.EqualFold(existingHostname, reportHostname) {
+		return true
+	}
+
+	return false
 }
 
 // dockerHostIDExists checks if a host ID is already in use.

@@ -805,6 +805,22 @@ func TestResolveDockerHostIdentifier(t *testing.T) {
 			expectFallbacks: 1,
 		},
 		{
+			name: "agent id match is ignored when host identity conflicts",
+			report: agentsdocker.Report{
+				Agent: agentsdocker.AgentInfo{ID: "agent-1"},
+				Host: agentsdocker.HostInfo{
+					Hostname: "node-b",
+				},
+			},
+			tokenRecord: &config.APITokenRecord{ID: "token-1"},
+			hosts: []models.DockerHost{
+				{ID: "existing-host", AgentID: "agent-1", TokenID: "token-1", Hostname: "node-a"},
+			},
+			expectMatch:     false,
+			expectedID:      "agent-1",
+			expectFallbacks: 2,
+		},
+		{
 			name: "no match, base available",
 			report: agentsdocker.Report{
 				Agent: agentsdocker.AgentInfo{ID: "new-agent"},

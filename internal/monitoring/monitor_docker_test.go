@@ -848,6 +848,54 @@ func TestApplyDockerReport_TokenBoundToDifferentAgent(t *testing.T) {
 	}
 }
 
+func TestApplyDockerReport_SameTokenAndAgentIdentityDifferentHostnameRejected(t *testing.T) {
+	monitor := newTestMonitor(t)
+
+	token := &config.APITokenRecord{ID: "shared-token", Name: "Shared Token"}
+	baseTime := time.Now().UTC()
+
+	firstReport := agentsdocker.Report{
+		Agent: agentsdocker.AgentInfo{
+			ID:              "shared-agent",
+			Version:         "1.0.0",
+			IntervalSeconds: 30,
+		},
+		Host: agentsdocker.HostInfo{
+			Hostname:  "swarm-node-a",
+			MachineID: "",
+		},
+		Timestamp: baseTime,
+	}
+
+	host, err := monitor.ApplyDockerReport(firstReport, token)
+	if err != nil {
+		t.Fatalf("first ApplyDockerReport failed: %v", err)
+	}
+	if host.ID == "" {
+		t.Fatal("expected first host id")
+	}
+
+	secondReport := firstReport
+	secondReport.Host.Hostname = "swarm-node-b"
+	secondReport.Timestamp = baseTime.Add(30 * time.Second)
+
+	_, err = monitor.ApplyDockerReport(secondReport, token)
+	if err == nil {
+		t.Fatal("expected error for shared token reused across different hosts")
+	}
+	if !strings.Contains(err.Error(), "Generate a dedicated token") {
+		t.Fatalf("expected dedicated token guidance, got: %v", err)
+	}
+
+	hosts := monitor.state.GetDockerHosts()
+	if len(hosts) != 1 {
+		t.Fatalf("expected original host state to remain intact, got %d hosts", len(hosts))
+	}
+	if hosts[0].Hostname != "swarm-node-a" {
+		t.Fatalf("expected original host to remain swarm-node-a, got %q", hosts[0].Hostname)
+	}
+}
+
 func TestApplyDockerReport_MissingHostname(t *testing.T) {
 	monitor := newTestMonitor(t)
 

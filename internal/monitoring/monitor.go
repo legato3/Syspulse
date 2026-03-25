@@ -2520,6 +2520,34 @@ func (m *Monitor) ApplyDockerReport(report agentsdocker.Report, tokenRecord *con
 					Msg("Rejecting Docker report: token already bound to different agent")
 				return models.DockerHost{}, fmt.Errorf("API token%s is already in use by agent %q (host: %s). Each Docker agent must use a unique API token. Generate a new token for this agent", tokenHint, boundAgentID, conflictingHostname)
 			}
+
+			for _, host := range hostsSnapshot {
+				if strings.TrimSpace(host.TokenID) != tokenID || strings.TrimSpace(host.AgentID) != agentID {
+					continue
+				}
+				if !dockerHostIdentityConflicts(host, report) {
+					continue
+				}
+				m.mu.Unlock()
+				conflictingHost := host.Hostname
+				if host.CustomDisplayName != "" {
+					conflictingHost = host.CustomDisplayName
+				} else if host.DisplayName != "" {
+					conflictingHost = host.DisplayName
+				}
+				tokenHint := tokenHintFromRecord(tokenRecord)
+				if tokenHint != "" {
+					tokenHint = " (" + tokenHint + ")"
+				}
+				log.Warn().
+					Str("tokenID", tokenID).
+					Str("agentID", agentID).
+					Str("existingHostID", host.ID).
+					Str("existingHostname", host.Hostname).
+					Str("reportingHostname", report.Host.Hostname).
+					Msg("Rejecting Docker report: shared token/agent identity conflicts with existing host")
+				return models.DockerHost{}, fmt.Errorf("API token%s is already bound to Docker host %q. Reusing the same token on another node is not supported. Generate a dedicated token for this Docker agent", tokenHint, conflictingHost)
+			}
 		} else {
 			// First time seeing this token - bind it to this agent
 			m.dockerTokenBindings[tokenID] = agentID
