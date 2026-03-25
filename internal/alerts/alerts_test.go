@@ -16831,6 +16831,62 @@ func TestLoadActiveAlerts(t *testing.T) {
 			t.Errorf("first alert should win, got type %s", alert.Type)
 		}
 	})
+
+	t.Run("migrates legacy guest alert resource IDs to canonical format", func(t *testing.T) {
+		m := newTestManager(t)
+		m.ClearActiveAlerts()
+
+		alertsDir := filepath.Join(utils.GetDataDir(), "alerts")
+		if err := os.MkdirAll(alertsDir, 0755); err != nil {
+			t.Fatalf("failed to create alerts dir: %v", err)
+		}
+
+		startTime := time.Now().Add(-10 * time.Minute)
+		legacyResourceID := "pve1-100"
+		canonicalResourceID := BuildGuestKey("pve1", "node1", 100)
+		alerts := []Alert{
+			{
+				ID:           legacyResourceID + "-cpu",
+				Type:         "cpu",
+				Level:        AlertLevelWarning,
+				ResourceID:   legacyResourceID,
+				ResourceName: "test-vm",
+				Node:         "node1",
+				Instance:     "pve1",
+				StartTime:    startTime,
+				LastSeen:     time.Now(),
+			},
+		}
+
+		data, _ := json.Marshal(alerts)
+		alertsFile := filepath.Join(alertsDir, "active-alerts.json")
+		if err := os.WriteFile(alertsFile, data, 0644); err != nil {
+			t.Fatalf("failed to write alerts json: %v", err)
+		}
+
+		err := m.LoadActiveAlerts()
+		if err != nil {
+			t.Fatalf("failed to load alerts: %v", err)
+		}
+
+		m.mu.RLock()
+		alert, exists := m.activeAlerts[canonicalResourceID+"-cpu"]
+		_, oldExists := m.activeAlerts[legacyResourceID+"-cpu"]
+		m.mu.RUnlock()
+
+		if !exists {
+			t.Fatal("expected canonical guest alert to be loaded")
+		}
+		if oldExists {
+			t.Fatal("expected legacy guest alert ID to be replaced")
+		}
+		if alert.ResourceID != canonicalResourceID {
+			t.Fatalf("expected resource ID %q, got %q", canonicalResourceID, alert.ResourceID)
+		}
+		if alert.ID != canonicalResourceID+"-cpu" {
+			t.Fatalf("expected alert ID %q, got %q", canonicalResourceID+"-cpu", alert.ID)
+		}
+	})
 }
 
 func TestNamespaceMatchesInstance(t *testing.T) {

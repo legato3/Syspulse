@@ -9516,51 +9516,36 @@ func (m *Manager) LoadActiveAlerts() error {
 	seen := make(map[string]bool)
 
 	for _, alert := range alerts {
-		// Migrate legacy guest alert IDs (instance-node-VMID -> instance-VMID)
+		// Migrate legacy guest alert IDs to the canonical guest format.
 		// Check if this is a guest-related alert by looking at common alert types
 		isGuestAlert := strings.Contains(alert.Type, "cpu") || strings.Contains(alert.Type, "memory") ||
 			strings.Contains(alert.Type, "disk") || strings.Contains(alert.Type, "network") ||
 			alert.Type == "guest-offline"
 		if isGuestAlert {
-			// Try to extract instance, node, and VMID from resource ID
-			// Legacy format: instance-node-VMID or node-VMID (standalone)
 			parts := strings.Split(alert.ResourceID, "-")
 
-			// Check if this looks like a legacy format (has node in the ID)
-			// We can detect this if we have Node field and it appears in the ResourceID
 			if alert.Node != "" && len(parts) >= 2 {
 				var newResourceID string
+				oldResourceID := alert.ResourceID
 
 				// Try to extract VMID (should be last part)
 				vmidStr := parts[len(parts)-1]
 				if _, err := strconv.Atoi(vmidStr); err == nil {
-					// VMID is valid, now check if we need to migrate
-					if len(parts) == 3 && alert.Instance != "" && alert.Instance != alert.Node {
-						// Format: instance-node-VMID -> instance-VMID
-						newResourceID = fmt.Sprintf("%s-%s", alert.Instance, vmidStr)
-					} else if len(parts) == 2 && alert.Instance == alert.Node {
-						// Format: node-VMID -> instance-VMID (standalone)
-						newResourceID = fmt.Sprintf("%s-%s", alert.Instance, vmidStr)
-					}
+					vmid, _ := strconv.Atoi(vmidStr)
+					newResourceID = BuildGuestKey(alert.Instance, alert.Node, vmid)
 
-					if newResourceID != "" && newResourceID != alert.ResourceID {
+					if newResourceID != "" && newResourceID != oldResourceID {
 						log.Info().
-							Str("oldID", alert.ResourceID).
+							Str("oldID", oldResourceID).
 							Str("newID", newResourceID).
 							Str("alertType", alert.Type).
 							Msg("Migrating active alert from legacy guest ID format")
-
-						oldAlertID := alert.ID
 
 						// Update resource ID
 						alert.ResourceID = newResourceID
 
 						// Update alert ID (usually contains resource ID)
-						alert.ID = strings.Replace(alert.ID, alert.ResourceID, newResourceID, 1)
-
-						// Update seen map to use new ID
-						seen[alert.ID] = true
-						delete(seen, oldAlertID)
+						alert.ID = strings.Replace(alert.ID, oldResourceID, newResourceID, 1)
 					}
 				}
 			}

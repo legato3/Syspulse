@@ -1595,6 +1595,45 @@ func TestGetGuestThresholds(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy ID migration for clustered instance-vmid format", func(t *testing.T) {
+		canonicalID := BuildGuestKey("pve1", "node1", 100)
+		m := &Manager{
+			config: AlertConfig{
+				GuestDefaults: ThresholdConfig{},
+				Overrides: map[string]ThresholdConfig{
+					// Legacy cluster format: instance-vmid
+					"pve1-100": {
+						CPU: &HysteresisThreshold{Trigger: 65, Clear: 60},
+					},
+				},
+				CustomRules: []CustomAlertRule{},
+			},
+		}
+
+		vm := models.VM{
+			Name:     "test-vm",
+			Node:     "node1",
+			Instance: "pve1",
+			VMID:     100,
+		}
+
+		result := m.getGuestThresholds(vm, canonicalID)
+
+		if result.CPU == nil {
+			t.Fatal("CPU threshold should not be nil after cluster legacy migration")
+		}
+		if result.CPU.Trigger != 65 {
+			t.Errorf("expected CPU trigger 65 from migrated cluster legacy override, got %v", result.CPU.Trigger)
+		}
+
+		if _, exists := m.config.Overrides[canonicalID]; !exists {
+			t.Error("override should be migrated to canonical guest ID")
+		}
+		if _, exists := m.config.Overrides["pve1-100"]; exists {
+			t.Error("old cluster legacy override should be removed after migration")
+		}
+	})
+
 	t.Run("works with container type", func(t *testing.T) {
 		m := &Manager{
 			config: AlertConfig{

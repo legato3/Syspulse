@@ -268,7 +268,7 @@ func (m *Manager) getGuestThresholds(guest interface{}, guestID string) Threshol
 	}
 
 	// Finally check guest-specific overrides (highest priority)
-	// First try the new stable ID format (instance-VMID)
+	// First try the current canonical ID format (instance:node:vmid)
 	override, exists := m.config.Overrides[guestID]
 
 	// If not found, try legacy ID formats for migration
@@ -331,8 +331,8 @@ func (m *Manager) getGuestThresholds(guest interface{}, guestID string) Threshol
 	return thresholds
 }
 
-// tryLegacyOverrideMigration attempts to find and migrate legacy override formats.
-// Returns the override and true if found, or zero value and false otherwise.
+// tryLegacyOverrideMigration attempts to find and migrate legacy override formats
+// into the canonical guest ID format (instance:node:vmid).
 func (m *Manager) tryLegacyOverrideMigration(guest interface{}, guestID string) (ThresholdConfig, bool) {
 	var node string
 	var vmid int
@@ -363,6 +363,22 @@ func (m *Manager) tryLegacyOverrideMigration(guest interface{}, guestID string) 
 				Msg("Migrating guest override from legacy ID format")
 
 			// Move to new ID
+			m.config.Overrides[guestID] = legacyOverride
+			delete(m.config.Overrides, legacyID)
+
+			return legacyOverride, true
+		}
+	}
+
+	// Try legacy clustered format: instance-VMID
+	if instance != "" {
+		legacyID := fmt.Sprintf("%s-%d", instance, vmid)
+		if legacyOverride, legacyExists := m.config.Overrides[legacyID]; legacyExists {
+			log.Info().
+				Str("legacyID", legacyID).
+				Str("newID", guestID).
+				Msg("Migrating guest override from legacy cluster ID format")
+
 			m.config.Overrides[guestID] = legacyOverride
 			delete(m.config.Overrides, legacyID)
 
