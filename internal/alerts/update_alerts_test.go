@@ -403,3 +403,201 @@ func TestDockerUpdateTrackingCleanup(t *testing.T) {
 		t.Error("Expected other host identity tracking to remain")
 	}
 }
+
+func TestUpdateConfigClearsDockerContainerUpdateAlertsWhenDisabled(t *testing.T) {
+	m := newTestManager(t)
+
+	host := models.DockerHost{
+		ID:          "docker-host-1",
+		DisplayName: "Docker Host",
+		Hostname:    "docker.local",
+	}
+	container := models.DockerContainer{
+		ID:    "container-1",
+		Name:  "/frontend",
+		Image: "nginx:latest",
+	}
+	resourceID := dockerResourceID(host.ID, container.ID)
+	alertID := "docker-container-update-" + resourceID
+	trackingKey := dockerUpdateTrackingKey(host, container)
+	firstSeen := time.Now().Add(-48 * time.Hour)
+
+	m.mu.Lock()
+	m.activeAlerts[alertID] = &Alert{
+		ID:           alertID,
+		Type:         "docker-container-update",
+		ResourceID:   resourceID,
+		ResourceName: "frontend",
+		Instance:     "Docker",
+		Metadata: map[string]interface{}{
+			"resourceType":  "Docker Container",
+			"hostId":        host.ID,
+			"hostName":      host.DisplayName,
+			"hostHostname":  host.Hostname,
+			"containerId":   container.ID,
+			"containerName": "frontend",
+			"image":         container.Image,
+		},
+		StartTime: firstSeen,
+		LastSeen:  time.Now(),
+	}
+	m.dockerUpdateFirstSeen[resourceID] = firstSeen
+	m.dockerUpdateFirstSeenByIdentity[trackingKey] = firstSeen
+	m.mu.Unlock()
+
+	config := m.GetConfig()
+	config.DockerDefaults.UpdateAlertDelayHours = -1
+	m.UpdateConfig(config)
+
+	time.Sleep(50 * time.Millisecond)
+
+	m.mu.RLock()
+	_, hasAlert := m.activeAlerts[alertID]
+	_, hasResourceTracking := m.dockerUpdateFirstSeen[resourceID]
+	_, hasIdentityTracking := m.dockerUpdateFirstSeenByIdentity[trackingKey]
+	m.mu.RUnlock()
+
+	if hasAlert {
+		t.Fatalf("expected docker update alert to be cleared when update alerts are disabled")
+	}
+	if hasResourceTracking {
+		t.Fatalf("expected docker update resource tracking to be cleared when update alerts are disabled")
+	}
+	if hasIdentityTracking {
+		t.Fatalf("expected docker update identity tracking to be cleared when update alerts are disabled")
+	}
+}
+
+func TestUpdateConfigKeepsDockerContainerUpdateAlertsWhenStillEnabled(t *testing.T) {
+	m := newTestManager(t)
+
+	host := models.DockerHost{
+		ID:          "docker-host-2",
+		DisplayName: "Docker Host",
+		Hostname:    "docker-2.local",
+	}
+	container := models.DockerContainer{
+		ID:    "container-2",
+		Name:  "/api",
+		Image: "ghcr.io/example/api:latest",
+	}
+	resourceID := dockerResourceID(host.ID, container.ID)
+	alertID := "docker-container-update-" + resourceID
+	trackingKey := dockerUpdateTrackingKey(host, container)
+	firstSeen := time.Now().Add(-30 * time.Hour)
+
+	m.mu.Lock()
+	m.activeAlerts[alertID] = &Alert{
+		ID:           alertID,
+		Type:         "docker-container-update",
+		ResourceID:   resourceID,
+		ResourceName: "api",
+		Instance:     "Docker",
+		Metadata: map[string]interface{}{
+			"resourceType":  "Docker Container",
+			"hostId":        host.ID,
+			"hostName":      host.DisplayName,
+			"hostHostname":  host.Hostname,
+			"containerId":   container.ID,
+			"containerName": "api",
+			"image":         container.Image,
+		},
+		StartTime: firstSeen,
+		LastSeen:  time.Now(),
+	}
+	m.dockerUpdateFirstSeen[resourceID] = firstSeen
+	m.dockerUpdateFirstSeenByIdentity[trackingKey] = firstSeen
+	m.mu.Unlock()
+
+	config := m.GetConfig()
+	config.DockerDefaults.CPU.Trigger = 95
+	config.DockerDefaults.CPU.Clear = 90
+	m.UpdateConfig(config)
+
+	time.Sleep(50 * time.Millisecond)
+
+	m.mu.RLock()
+	_, hasAlert := m.activeAlerts[alertID]
+	resourceFirstSeen, hasResourceTracking := m.dockerUpdateFirstSeen[resourceID]
+	identityFirstSeen, hasIdentityTracking := m.dockerUpdateFirstSeenByIdentity[trackingKey]
+	m.mu.RUnlock()
+
+	if !hasAlert {
+		t.Fatalf("expected docker update alert to remain active when update alerts are still enabled")
+	}
+	if !hasResourceTracking {
+		t.Fatalf("expected docker update resource tracking to remain when update alerts stay enabled")
+	}
+	if !hasIdentityTracking {
+		t.Fatalf("expected docker update identity tracking to remain when update alerts stay enabled")
+	}
+	if !resourceFirstSeen.Equal(firstSeen) {
+		t.Fatalf("expected docker update resource tracking to preserve firstSeen, got %s want %s", resourceFirstSeen, firstSeen)
+	}
+	if !identityFirstSeen.Equal(firstSeen) {
+		t.Fatalf("expected docker update identity tracking to preserve firstSeen, got %s want %s", identityFirstSeen, firstSeen)
+	}
+}
+
+func TestEvaluateDockerContainerClearsUpdateAlertWhenOverrideDisabled(t *testing.T) {
+	m := newTestManager(t)
+
+	host := models.DockerHost{
+		ID:          "docker-host-3",
+		DisplayName: "Docker Host",
+		Hostname:    "docker-3.local",
+	}
+	container := models.DockerContainer{
+		ID:    "container-3",
+		Name:  "/worker",
+		Image: "ghcr.io/example/worker:latest",
+	}
+	resourceID := dockerResourceID(host.ID, container.ID)
+	alertID := "docker-container-update-" + resourceID
+	trackingKey := dockerUpdateTrackingKey(host, container)
+	firstSeen := time.Now().Add(-36 * time.Hour)
+
+	m.mu.Lock()
+	m.activeAlerts[alertID] = &Alert{
+		ID:           alertID,
+		Type:         "docker-container-update",
+		ResourceID:   resourceID,
+		ResourceName: "worker",
+		Instance:     "Docker",
+		Metadata: map[string]interface{}{
+			"resourceType":  "Docker Container",
+			"hostId":        host.ID,
+			"hostName":      host.DisplayName,
+			"hostHostname":  host.Hostname,
+			"containerId":   container.ID,
+			"containerName": "worker",
+			"image":         container.Image,
+		},
+		StartTime: firstSeen,
+		LastSeen:  time.Now(),
+	}
+	m.dockerUpdateFirstSeen[resourceID] = firstSeen
+	m.dockerUpdateFirstSeenByIdentity[trackingKey] = firstSeen
+	m.config.Overrides[resourceID] = ThresholdConfig{Disabled: true}
+	m.mu.Unlock()
+
+	m.evaluateDockerContainer(host, container, resourceID)
+
+	time.Sleep(50 * time.Millisecond)
+
+	m.mu.RLock()
+	_, hasAlert := m.activeAlerts[alertID]
+	_, hasResourceTracking := m.dockerUpdateFirstSeen[resourceID]
+	_, hasIdentityTracking := m.dockerUpdateFirstSeenByIdentity[trackingKey]
+	m.mu.RUnlock()
+
+	if hasAlert {
+		t.Fatalf("expected docker update alert to be cleared when the container override disables alerts")
+	}
+	if hasResourceTracking {
+		t.Fatalf("expected docker update resource tracking to be cleared when the container override disables alerts")
+	}
+	if hasIdentityTracking {
+		t.Fatalf("expected docker update identity tracking to be cleared when the container override disables alerts")
+	}
+}

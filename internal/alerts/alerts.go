@@ -1693,6 +1693,11 @@ func (m *Manager) applyGlobalOfflineSettingsLocked() {
 		m.dockerUpdateFirstSeen = make(map[string]time.Time)
 		m.dockerUpdateFirstSeenByIdentity = make(map[string]time.Time)
 	}
+	if m.config.DockerDefaults.UpdateAlertDelayHours < 0 && !m.config.DisableAllDockerContainers {
+		m.clearDockerContainerUpdateAlertsLocked()
+		m.dockerUpdateFirstSeen = make(map[string]time.Time)
+		m.dockerUpdateFirstSeenByIdentity = make(map[string]time.Time)
+	}
 	if m.config.DisableAllDockerServices {
 		var serviceAlerts []string
 		for alertID := range m.activeAlerts {
@@ -1717,6 +1722,20 @@ func (m *Manager) reevaluateActiveAlertsLocked() {
 	alertsToResolve := make([]string, 0)
 
 	for alertID, alert := range m.activeAlerts {
+		resourceTypeMeta := ""
+		if alert.Metadata != nil {
+			if metaType, ok := alert.Metadata["resourceType"].(string); ok {
+				resourceTypeMeta = strings.ToLower(metaType)
+			}
+		}
+
+		if alert.Type == "docker-container-update" || strings.HasPrefix(alertID, "docker-container-update-") {
+			if m.shouldResolveDockerContainerUpdateAlertLocked(alert) {
+				alertsToResolve = append(alertsToResolve, alertID)
+			}
+			continue
+		}
+
 		// Parse the alert ID to extract resource ID and metric type
 		// Alert ID format: {resourceID}-{metricType}
 		parts := strings.Split(alertID, "-")
@@ -1729,13 +1748,6 @@ func (m *Manager) reevaluateActiveAlertsLocked() {
 
 		// Get the appropriate threshold based on resource type and ID
 		var threshold *HysteresisThreshold
-
-		resourceTypeMeta := ""
-		if alert.Metadata != nil {
-			if metaType, ok := alert.Metadata["resourceType"].(string); ok {
-				resourceTypeMeta = strings.ToLower(metaType)
-			}
-		}
 
 		// Check for PMG alerts by Type
 		if alert.Type == "queue-depth" || alert.Type == "queue-deferred" || alert.Type == "queue-hold" || alert.Type == "message-age" {
@@ -3986,6 +3998,8 @@ func (m *Manager) evaluateDockerContainer(host models.DockerHost, container mode
 		m.clearDockerContainerStateAlert(resourceID)
 		m.clearDockerContainerHealthAlert(resourceID)
 		m.clearDockerContainerMetricAlerts(resourceID)
+		m.clearAlert(fmt.Sprintf("docker-container-update-%s", resourceID))
+		m.clearDockerContainerUpdateTracking(resourceID, dockerUpdateTrackingKey(host, container))
 		return
 	}
 
@@ -4873,6 +4887,93 @@ func (m *Manager) clearDockerContainerUpdateTracking(resourceID, trackingKey str
 		delete(m.dockerUpdateFirstSeenByIdentity, trackingKey)
 	}
 	m.mu.Unlock()
+}
+
+func dockerUpdateTrackingKeyFromAlert(alert *Alert) string {
+	if alert == nil || alert.Metadata == nil {
+		return ""
+	}
+
+	host := models.DockerHost{
+		ID:          strings.TrimSpace(fmt.Sprint(alert.Metadata["hostId"])),
+		DisplayName: strings.TrimSpace(fmt.Sprint(alert.Metadata["hostName"])),
+		Hostname:    strings.TrimSpace(fmt.Sprint(alert.Metadata["hostHostname"])),
+	}
+	container := models.DockerContainer{
+		ID:    strings.TrimSpace(fmt.Sprint(alert.Metadata["containerId"])),
+		Name:  strings.TrimSpace(fmt.Sprint(alert.Metadata["containerName"])),
+		Image: strings.TrimSpace(fmt.Sprint(alert.Metadata["image"])),
+	}
+
+	if host.ID == "" && host.DisplayName == "" && host.Hostname == "" &&
+		container.ID == "" && container.Name == "" && container.Image == "" {
+		return ""
+	}
+
+	return dockerUpdateTrackingKey(host, container)
+}
+
+func (m *Manager) clearDockerContainerUpdateStateLocked(alert *Alert) {
+	if alert == nil {
+		return
+	}
+
+	if alert.ResourceID != "" {
+		delete(m.dockerUpdateFirstSeen, alert.ResourceID)
+	}
+	if trackingKey := dockerUpdateTrackingKeyFromAlert(alert); trackingKey != "" {
+		delete(m.dockerUpdateFirstSeenByIdentity, trackingKey)
+	}
+}
+
+func (m *Manager) clearDockerContainerUpdateAlertsLocked() {
+	toClear := make([]string, 0)
+	for alertID, alert := range m.activeAlerts {
+		if alert == nil {
+			continue
+		}
+		if alert.Type != "docker-container-update" && !strings.HasPrefix(alertID, "docker-container-update-") {
+			continue
+		}
+		m.clearDockerContainerUpdateStateLocked(alert)
+		toClear = append(toClear, alertID)
+	}
+	for _, alertID := range toClear {
+		m.clearAlertNoLock(alertID)
+	}
+}
+
+func (m *Manager) shouldResolveDockerContainerUpdateAlertLocked(alert *Alert) bool {
+	if alert == nil {
+		return false
+	}
+
+	if m.config.DisableAllDockerContainers || m.config.DockerDefaults.UpdateAlertDelayHours < 0 {
+		m.clearDockerContainerUpdateStateLocked(alert)
+		return true
+	}
+
+	if override, exists := m.config.Overrides[alert.ResourceID]; exists && override.Disabled {
+		m.clearDockerContainerUpdateStateLocked(alert)
+		return true
+	}
+
+	containerName := strings.TrimSpace(alert.ResourceName)
+	containerID := ""
+	if alert.Metadata != nil {
+		if value, ok := alert.Metadata["containerName"].(string); ok && containerName == "" {
+			containerName = value
+		}
+		if value, ok := alert.Metadata["containerId"].(string); ok {
+			containerID = value
+		}
+	}
+	if matchesDockerIgnoredPrefix(containerName, containerID, m.config.DockerIgnoredContainerPrefixes) {
+		m.clearDockerContainerUpdateStateLocked(alert)
+		return true
+	}
+
+	return false
 }
 
 // checkDockerContainerImageUpdate checks if an image update has been pending for too long
