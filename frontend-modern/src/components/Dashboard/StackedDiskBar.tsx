@@ -3,6 +3,11 @@ import { Portal } from 'solid-js/web';
 import type { Disk } from '@/types/api';
 import { formatBytes, formatPercent } from '@/utils/format';
 import type { AnomalyReport } from '@/types/aiIntelligence';
+import {
+  getDefaultMetricDisplayThresholds,
+  getMetricSeverity,
+  type MetricDisplayThresholds,
+} from '@/utils/alertThresholds';
 
 interface StackedDiskBarProps {
   /** Array of disk objects - if empty/undefined, falls back to aggregate */
@@ -13,6 +18,8 @@ interface StackedDiskBarProps {
   mode?: 'stacked' | 'aggregate' | 'mini';
   /** Baseline anomaly if detected */
   anomaly?: AnomalyReport | null;
+  /** Warning/critical thresholds for usage coloring */
+  thresholds?: MetricDisplayThresholds | null;
 }
 
 // Anomaly severity colors
@@ -34,9 +41,19 @@ const SEGMENT_COLORS = [
 ];
 
 // Get color based on usage percentage
-function getUsageColor(percentage: number): string {
-  if (percentage >= 90) return 'rgba(239, 68, 68, 0.6)';  // red
-  if (percentage >= 80) return 'rgba(234, 179, 8, 0.6)';  // yellow
+function getUsageColor(
+  percentage: number,
+  thresholds?: MetricDisplayThresholds | null,
+): string {
+  const resolvedThresholds = thresholds === undefined
+    ? getDefaultMetricDisplayThresholds('disk')
+    : thresholds;
+  const severity = getMetricSeverity(
+    percentage,
+    resolvedThresholds,
+  );
+  if (severity === 'red') return 'rgba(239, 68, 68, 0.6)';  // red
+  if (severity === 'yellow') return 'rgba(234, 179, 8, 0.6)';  // yellow
   return 'rgba(34, 197, 94, 0.6)'; // green
 }
 
@@ -118,8 +135,12 @@ export function StackedDiskBar(props: StackedDiskBarProps) {
       const usedPercent = (disk.used / total) * 100;
       const diskPercent = disk.total > 0 ? (disk.used / disk.total) * 100 : 0;
       // Use warning/critical colors for high usage, otherwise use the color palette
-      const color = diskPercent >= 90 ? getUsageColor(90) :
-        diskPercent >= 80 ? getUsageColor(80) :
+      const color = getMetricSeverity(
+        diskPercent,
+        props.thresholds === undefined ? getDefaultMetricDisplayThresholds('disk') : props.thresholds,
+      ) !== 'green'
+        ? getUsageColor(diskPercent, props.thresholds)
+        :
           SEGMENT_COLORS[idx % SEGMENT_COLORS.length];
       return {
         disk,
@@ -144,7 +165,7 @@ export function StackedDiskBar(props: StackedDiskBarProps) {
       return {
         label,
         percent,
-        color: getUsageColor(percent),
+        color: getUsageColor(percent, props.thresholds),
       };
     });
   });
@@ -182,7 +203,7 @@ export function StackedDiskBar(props: StackedDiskBarProps) {
     if (aggregateMode() && hasMultipleDisks() && info) {
       return getUsageColor(info.percent);
     }
-    return getUsageColor(overallPercent());
+    return getUsageColor(overallPercent(), props.thresholds);
   });
 
   // Generate tooltip content
@@ -198,12 +219,13 @@ export function StackedDiskBar(props: StackedDiskBarProps) {
           total: formatBytes(disk.total),
           percent: formatPercent(percent),
           color: useUsageColors
-            ? getUsageColor(percent)
-            : percent >= 90
-              ? getUsageColor(90)
-              : percent >= 80
-                ? getUsageColor(80)
-                : SEGMENT_COLORS[idx % SEGMENT_COLORS.length],
+            ? getUsageColor(percent, props.thresholds)
+            : getMetricSeverity(
+              percent,
+              props.thresholds === undefined ? getDefaultMetricDisplayThresholds('disk') : props.thresholds,
+            ) !== 'green'
+              ? getUsageColor(percent, props.thresholds)
+              : SEGMENT_COLORS[idx % SEGMENT_COLORS.length],
         };
       });
     }
@@ -215,7 +237,7 @@ export function StackedDiskBar(props: StackedDiskBarProps) {
         used: formatBytes(props.aggregateDisk.used),
         total: formatBytes(props.aggregateDisk.total),
         percent: formatPercent(percent),
-        color: getUsageColor(percent),
+        color: getUsageColor(percent, props.thresholds),
       }];
     }
     return [];

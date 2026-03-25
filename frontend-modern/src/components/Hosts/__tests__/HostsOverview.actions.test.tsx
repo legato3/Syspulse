@@ -48,6 +48,7 @@ vi.mock('@/hooks/useColumnVisibility', () => ({
 vi.mock('@/stores/alertsActivation', () => ({
   useAlertsActivation: () => ({
     getTemperatureThreshold: () => 80,
+    getMetricThresholds: () => ({ warning: 75, critical: 80 }),
   }),
 }));
 

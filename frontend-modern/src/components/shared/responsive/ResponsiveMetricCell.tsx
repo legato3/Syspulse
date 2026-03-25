@@ -1,6 +1,11 @@
 import { Component, Show, createMemo, JSX } from 'solid-js';
 import { MetricBar } from '@/components/Dashboard/MetricBar';
 import { formatPercent } from '@/utils/format';
+import {
+  getDefaultMetricDisplayThresholds,
+  getMetricSeverity,
+  type MetricDisplayThresholds,
+} from '@/utils/alertThresholds';
 
 export interface ResponsiveMetricCellProps {
   /** Metric value (0-100 percentage) */
@@ -18,6 +23,9 @@ export interface ResponsiveMetricCellProps {
   /** Resource ID for sparkline tracking */
   resourceId?: string;
 
+  /** Display thresholds for warning/critical coloring */
+  thresholds?: MetricDisplayThresholds | null;
+
   /** Whether the resource is running/online - if false, shows fallback */
   isRunning?: boolean;
 
@@ -34,26 +42,17 @@ export interface ResponsiveMetricCellProps {
 /**
  * Get the appropriate text color class based on metric value and type
  */
-function getMetricColorClass(value: number, type: 'cpu' | 'memory' | 'disk'): string {
-  // Thresholds match MetricBar component
-  if (type === 'cpu') {
-    if (value >= 90) return 'text-red-600 dark:text-red-400 font-bold';
-    if (value >= 80) return 'text-orange-600 dark:text-orange-400 font-medium';
-    return 'text-gray-600 dark:text-gray-400';
-  }
-
-  if (type === 'memory') {
-    if (value >= 85) return 'text-red-600 dark:text-red-400 font-bold';
-    if (value >= 75) return 'text-orange-600 dark:text-orange-400 font-medium';
-    return 'text-gray-600 dark:text-gray-400';
-  }
-
-  if (type === 'disk') {
-    if (value >= 90) return 'text-red-600 dark:text-red-400 font-bold';
-    if (value >= 80) return 'text-orange-600 dark:text-orange-400 font-medium';
-    return 'text-gray-600 dark:text-gray-400';
-  }
-
+function getMetricColorClass(
+  value: number,
+  type: 'cpu' | 'memory' | 'disk',
+  thresholds?: MetricDisplayThresholds | null,
+): string {
+  const resolvedThresholds = thresholds === undefined
+    ? getDefaultMetricDisplayThresholds(type)
+    : thresholds;
+  const severity = getMetricSeverity(value, resolvedThresholds);
+  if (severity === 'red') return 'text-red-600 dark:text-red-400 font-bold';
+  if (severity === 'yellow') return 'text-orange-600 dark:text-orange-400 font-medium';
   return 'text-gray-600 dark:text-gray-400';
 }
 
@@ -74,7 +73,7 @@ function getMetricColorClass(value: number, type: 'cpu' | 'memory' | 'disk'): st
  */
 export const ResponsiveMetricCell: Component<ResponsiveMetricCellProps> = (props) => {
   const displayLabel = createMemo(() => props.label ?? formatPercent(props.value));
-  const colorClass = createMemo(() => getMetricColorClass(props.value, props.type));
+  const colorClass = createMemo(() => getMetricColorClass(props.value, props.type, props.thresholds));
   const isRunning = () => props.isRunning !== false; // Default to true if not specified
 
   const defaultFallback = (
@@ -100,6 +99,7 @@ export const ResponsiveMetricCell: Component<ResponsiveMetricCellProps> = (props
             label={displayLabel()}
             sublabel={props.sublabel}
             type={props.type}
+            thresholds={props.thresholds}
             resourceId={props.resourceId}
           />
         </div>
@@ -116,10 +116,11 @@ export const MetricText: Component<{
   value: number;
   type: 'cpu' | 'memory' | 'disk';
   label?: string;
+  thresholds?: MetricDisplayThresholds | null;
   class?: string;
 }> = (props) => {
   const displayLabel = createMemo(() => props.label ?? formatPercent(props.value));
-  const colorClass = createMemo(() => getMetricColorClass(props.value, props.type));
+  const colorClass = createMemo(() => getMetricColorClass(props.value, props.type, props.thresholds));
 
   return (
     <span class={`text-xs text-center ${colorClass()} ${props.class || ''}`}>
@@ -138,6 +139,7 @@ export const DualMetricCell: Component<{
   label?: string;
   sublabel?: string;
   resourceId?: string;
+  thresholds?: MetricDisplayThresholds | null;
   isRunning?: boolean;
   showMobile: boolean;
   mobileContent?: JSX.Element;
@@ -146,7 +148,7 @@ export const DualMetricCell: Component<{
   class?: string;
 }> = (props) => {
   const displayLabel = createMemo(() => props.label ?? formatPercent(props.value));
-  const colorClass = createMemo(() => getMetricColorClass(props.value, props.type));
+  const colorClass = createMemo(() => getMetricColorClass(props.value, props.type, props.thresholds));
   const isRunning = () => props.isRunning !== false;
 
   const defaultFallback = (
@@ -167,6 +169,7 @@ export const DualMetricCell: Component<{
       label={displayLabel()}
       sublabel={props.sublabel}
       type={props.type}
+      thresholds={props.thresholds}
       resourceId={props.resourceId}
     />
   );

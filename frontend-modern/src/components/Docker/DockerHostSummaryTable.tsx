@@ -11,6 +11,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { ResponsiveMetricCell } from '@/components/shared/responsive';
 import { EnhancedCPUBar } from '@/components/Dashboard/EnhancedCPUBar';
 import { isAgentOutdated, getAgentVersionTooltip } from '@/utils/agentVersion';
+import { useAlertsActivation } from '@/stores/alertsActivation';
 
 
 export interface DockerHostSummary {
@@ -53,6 +54,7 @@ export const DockerHostSummaryTable: Component<DockerHostSummaryTableProps> = (p
   const [sortKey, setSortKey] = createSignal<SortKey>('name');
   const [sortDirection, setSortDirection] = createSignal<SortDirection>('asc');
   const { isMobile } = useBreakpoint();
+  const alertsActivation = useAlertsActivation();
 
   const handleSort = (key: SortKey) => {
     if (sortKey() === key) {
@@ -241,6 +243,9 @@ export const DockerHostSummaryTable: Component<DockerHostSummaryTableProps> = (p
                   const runtimeVersion = summary.host.runtimeVersion || summary.host.dockerVersion;
                   const metricsKey = buildMetricKey('dockerHost', summary.host.id);
                   const hostStatus = createMemo(() => getDockerHostStatusIndicator(summary.host));
+                  const cpuThresholds = createMemo(() => alertsActivation.getMetricThresholds('docker', 'cpu', summary.host.id));
+                  const memoryThresholds = createMemo(() => alertsActivation.getMetricThresholds('docker', 'memory', summary.host.id));
+                  const diskThresholds = createMemo(() => alertsActivation.getMetricThresholds('docker', 'disk', summary.host.id));
 
                   return (
                     <tr
@@ -292,6 +297,7 @@ export const DockerHostSummaryTable: Component<DockerHostSummaryTableProps> = (p
                             usage={summary.cpuPercent}
                             loadAverage={summary.host.loadAverage?.[0]}
                             cores={isMobile() ? undefined : summary.host.cpus}
+                            thresholds={cpuThresholds()}
                             resourceId={metricsKey}
                           />
                         </div>
@@ -305,6 +311,7 @@ export const DockerHostSummaryTable: Component<DockerHostSummaryTableProps> = (p
                             resourceId={metricsKey}
                             isRunning={online}
                             showMobile={false}
+                            thresholds={memoryThresholds()}
                           />
                         </div>
                       </td>
@@ -317,6 +324,7 @@ export const DockerHostSummaryTable: Component<DockerHostSummaryTableProps> = (p
                             resourceId={metricsKey}
                             isRunning={!!summary.diskLabel}
                             showMobile={false}
+                            thresholds={diskThresholds()}
                           />
                         </div>
                       </td>

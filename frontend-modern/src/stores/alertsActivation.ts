@@ -3,6 +3,12 @@ import { AlertsAPI } from '@/api/alerts';
 import type { AlertConfig, ActivationState as ActivationStateType } from '@/types/alerts';
 import type { Alert } from '@/types/api';
 import { setGlobalActivationState } from '@/utils/alertsActivation';
+import {
+  FACTORY_NODE_DEFAULTS,
+  type AlertThresholdScope,
+  type DisplayMetricType,
+  resolveMetricDisplayThresholds,
+} from '@/utils/alertThresholds';
 import { logger } from '@/utils/logger';
 
 // Create signals for activation state
@@ -129,14 +135,15 @@ const getBackupThresholds = (): { freshHours: number; staleHours: number } => {
 
 // Get temperature threshold from config (for display coloring)
 const getTemperatureThreshold = (): number => {
-  const cfg = config();
-  // nodeDefaults.temperature is a HysteresisThreshold with trigger/clear
-  const tempConfig = cfg?.nodeDefaults?.temperature;
-  if (typeof tempConfig === 'object' && tempConfig !== null && 'trigger' in tempConfig) {
-    return (tempConfig as { trigger: number }).trigger;
-  }
-  // Fallback to default 80°C
-  return 80;
+  return getMetricThresholds('node', 'temperature')?.critical ?? FACTORY_NODE_DEFAULTS.temperature;
+};
+
+const getMetricThresholds = (
+  scope: AlertThresholdScope,
+  metric: DisplayMetricType,
+  resourceId?: string,
+) => {
+  return resolveMetricDisplayThresholds(config(), scope, metric, resourceId);
 };
 
 // Export the store
@@ -152,6 +159,7 @@ export const useAlertsActivation = () => ({
   isPastObservationWindow,
   getBackupThresholds,
   getTemperatureThreshold,
+  getMetricThresholds,
 
   // Actions
   refreshConfig,

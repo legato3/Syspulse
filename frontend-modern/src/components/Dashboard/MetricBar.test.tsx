@@ -67,12 +67,12 @@ describe('MetricBar', () => {
         expect(bar).toBeInTheDocument();
         result.unmount();
 
-        result = render(() => <MetricBar value={80} label="val" type="cpu" />);
+        result = render(() => <MetricBar value={75} label="val" type="cpu" />);
         bar = result.container.querySelector('.bg-yellow-500\\/60');
         expect(bar).toBeInTheDocument();
         result.unmount();
 
-        result = render(() => <MetricBar value={90} label="val" type="cpu" />);
+        result = render(() => <MetricBar value={80} label="val" type="cpu" />);
         bar = result.container.querySelector('.bg-red-500\\/60');
         expect(bar).toBeInTheDocument();
         result.unmount();
@@ -84,7 +84,7 @@ describe('MetricBar', () => {
         expect(bar).toBeInTheDocument();
         result.unmount();
 
-        result = render(() => <MetricBar value={75} label="val" type="memory" />);
+        result = render(() => <MetricBar value={80} label="val" type="memory" />);
         bar = result.container.querySelector('.bg-yellow-500\\/60');
         expect(bar).toBeInTheDocument();
         result.unmount();
@@ -101,7 +101,7 @@ describe('MetricBar', () => {
         expect(bar).toBeInTheDocument();
         result.unmount();
 
-        result = render(() => <MetricBar value={80} label="val" type="disk" />);
+        result = render(() => <MetricBar value={85} label="val" type="disk" />);
         bar = result.container.querySelector('.bg-yellow-500\\/60');
         expect(bar).toBeInTheDocument();
         result.unmount();
@@ -127,6 +127,31 @@ describe('MetricBar', () => {
         bar = result.container.querySelector('.bg-red-500\\/60');
         expect(bar).toBeInTheDocument();
         result.unmount();
+    });
+
+    it('uses explicit thresholds when provided', () => {
+        let result = render(() => (
+            <MetricBar
+                value={80}
+                label="val"
+                type="cpu"
+                thresholds={{ warning: 80, critical: 85 }}
+            />
+        ));
+        let bar = result.container.querySelector('.bg-yellow-500\\/60');
+        expect(bar).toBeInTheDocument();
+        result.unmount();
+
+        result = render(() => (
+            <MetricBar
+                value={85}
+                label="val"
+                type="cpu"
+                thresholds={{ warning: 80, critical: 85 }}
+            />
+        ));
+        bar = result.container.querySelector('.bg-red-500\\/60');
+        expect(bar).toBeInTheDocument();
     });
 
     it('toggles sparkline view mode', () => {

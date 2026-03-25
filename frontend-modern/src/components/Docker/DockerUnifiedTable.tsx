@@ -40,6 +40,7 @@ import { GuestMetadataAPI, type GuestMetadata } from '@/api/guestMetadata';
 import { UrlEditPopover, createUrlEditState } from '@/components/shared/UrlEditPopover';
 import { showSuccess, showError } from '@/utils/toast';
 import { logger } from '@/utils/logger';
+import { useAlertsActivation } from '@/stores/alertsActivation';
 
 type GuestMetadataRecord = Record<string, GuestMetadata>;
 
@@ -810,6 +811,7 @@ const DockerContainerRow: Component<{
   onCustomUrlChange?: (guestId: string, url: string) => void;
 }> = (props) => {
   const { host, container } = props.row;
+  const alertsActivation = useAlertsActivation();
   const runtimeInfo = resolveHostRuntime(host);
   const runtimeVersion = () => host.runtimeVersion || host.dockerVersion || null;
   const hostStatus = createMemo(() => getDockerHostStatusIndicator(host));
@@ -960,6 +962,9 @@ const DockerContainerRow: Component<{
 
   const cpuPercent = () => Math.max(0, Math.min(100, container.cpuPercent ?? 0));
   const metricsKey = buildMetricKey('dockerContainer', container.id);
+  const cpuThresholds = createMemo(() => alertsActivation.getMetricThresholds('docker', 'cpu', container.id));
+  const memoryThresholds = createMemo(() => alertsActivation.getMetricThresholds('docker', 'memory', container.id));
+  const diskThresholds = createMemo(() => alertsActivation.getMetricThresholds('docker', 'disk', container.id));
 
   const uptime = () => (container.uptimeSeconds ? formatUptime(container.uptimeSeconds) : '—');
   const restarts = () => container.restartCount ?? 0;
@@ -1096,6 +1101,7 @@ const DockerContainerRow: Component<{
               isRunning={isRunning()}
               showMobile={false}
               class="w-full"
+              thresholds={cpuThresholds()}
             />
           </div>
         );
@@ -1113,6 +1119,7 @@ const DockerContainerRow: Component<{
                 balloon={0}
                 swapUsed={0}
                 swapTotal={0}
+                thresholds={memoryThresholds()}
                 resourceId={metricsKey}
               />
             </div>
@@ -1131,6 +1138,7 @@ const DockerContainerRow: Component<{
                   isRunning={true}
                   showMobile={false}
                   class="w-full"
+                  thresholds={diskThresholds()}
                 />
               </Show>
             </Show>

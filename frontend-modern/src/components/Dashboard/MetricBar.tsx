@@ -2,12 +2,18 @@ import { Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js';
 import { Sparkline } from '@/components/shared/Sparkline';
 import { useMetricsViewMode } from '@/stores/metricsViewMode';
 import { getMetricHistoryForRange, getMetricsVersion } from '@/stores/metricsHistory';
+import {
+  getDefaultMetricDisplayThresholds,
+  getMetricSeverity,
+  type MetricDisplayThresholds,
+} from '@/utils/alertThresholds';
 
 interface MetricBarProps {
   value: number;
   label: string;
   sublabel?: string;
   type?: 'cpu' | 'memory' | 'disk' | 'generic';
+  thresholds?: MetricDisplayThresholds | null;
   resourceId?: string; // Required for sparkline mode to fetch history
   class?: string;
 }
@@ -52,27 +58,12 @@ export function MetricBar(props: MetricBarProps) {
   });
 
   // Get color based on percentage and metric type (matching original)
-  const getColor = createMemo(() => {
-    const percentage = props.value;
+  const severity = createMemo(() => {
     const metric = props.type || 'generic';
-
-    if (metric === 'cpu') {
-      if (percentage >= 90) return 'red';
-      if (percentage >= 80) return 'yellow';
-      return 'green';
-    } else if (metric === 'memory') {
-      if (percentage >= 85) return 'red';
-      if (percentage >= 75) return 'yellow';
-      return 'green';
-    } else if (metric === 'disk') {
-      if (percentage >= 90) return 'red';
-      if (percentage >= 80) return 'yellow';
-      return 'green';
-    } else {
-      if (percentage >= 90) return 'red';
-      if (percentage >= 75) return 'yellow';
-      return 'green';
-    }
+    const thresholds = props.thresholds === undefined
+      ? getDefaultMetricDisplayThresholds(metric)
+      : props.thresholds;
+    return getMetricSeverity(props.value, thresholds);
   });
 
   // Map color to CSS classes
@@ -82,7 +73,7 @@ export function MetricBar(props: MetricBarProps) {
       yellow: 'bg-yellow-500/60 dark:bg-yellow-500/50',
       green: 'bg-green-500/60 dark:bg-green-500/50',
     };
-    return colorMap[getColor()] || 'bg-gray-500/60 dark:bg-gray-500/50';
+    return colorMap[severity()] || 'bg-gray-500/60 dark:bg-gray-500/50';
   });
 
   // Get metric history for sparkline

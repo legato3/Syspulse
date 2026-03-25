@@ -42,9 +42,6 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
   const { isMobile } = useBreakpoint();
   const { viewMode } = useMetricsViewMode();
 
-  // Get user-configured temperature threshold for display coloring
-  const temperatureThreshold = createMemo(() => alertsActivation.getTemperatureThreshold());
-
   const isTemperatureMonitoringEnabled = (node: Node): boolean => {
     const globalEnabled = props.globalTemperatureMonitoringEnabled ?? true;
     if (node.temperatureMonitoringEnabled !== undefined && node.temperatureMonitoringEnabled !== null) {
@@ -457,6 +454,15 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                 const isExpanded = () => expandedNodeId() === nodeId;
                 const resourceId = isPVEItem ? node!.id || node!.name : pbs!.id || pbs!.name;
                 const metricsKey = buildMetricKey('node', resourceId);
+                const scope = isPVEItem ? 'node' : 'pbs';
+                const cpuThresholds = createMemo(() => alertsActivation.getMetricThresholds(scope, 'cpu', resourceId));
+                const memoryThresholds = createMemo(() => alertsActivation.getMetricThresholds(scope, 'memory', resourceId));
+                const diskThresholds = createMemo(() => alertsActivation.getMetricThresholds(scope, 'disk', resourceId));
+                const temperatureThresholds = createMemo(() => (
+                  isPVEItem
+                    ? alertsActivation.getMetricThresholds('node', 'temperature', resourceId)
+                    : null
+                ));
                 const alertStyles = createMemo(() =>
                   getAlertStyles(resourceId, activeAlerts, alertsEnabled()),
                 );
@@ -631,6 +637,7 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                             loadAverage={isPVEItem ? node!.loadAverage?.[0] : undefined}
                             cores={isMobile() ? undefined : (isPVEItem ? node!.cpuInfo?.cores : undefined)}
                             model={isPVEItem ? node!.cpuInfo?.model : undefined}
+                            thresholds={cpuThresholds()}
                             resourceId={metricsKey}
                           />
                         </div>
@@ -647,6 +654,7 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                               sublabel={pbs!.memoryTotal ? `${formatBytes(pbs!.memoryUsed)}/${formatBytes(pbs!.memoryTotal)}` : undefined}
                               isRunning={online}
                               showMobile={false}
+                              thresholds={memoryThresholds()}
                             />
                           }>
                             <Show
@@ -659,6 +667,7 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                                   balloon={node!.memory?.balloon || 0}
                                   swapUsed={node!.memory?.swapUsed || 0}
                                   swapTotal={node!.memory?.swapTotal || 0}
+                                  thresholds={memoryThresholds()}
                                   resourceId={metricsKey}
                                 />
                               }
@@ -669,6 +678,7 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                                 resourceId={metricsKey}
                                 isRunning={online}
                                 showMobile={false}
+                                thresholds={memoryThresholds()}
                               />
                             </Show>
                           </Show>
@@ -686,6 +696,7 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                               sublabel={diskSublabel}
                               isRunning={online}
                               showMobile={false}
+                              thresholds={diskThresholds()}
                             />
                           }>
                             <Show
@@ -698,6 +709,7 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                                     free: (node!.disk?.total || 0) - (node!.disk?.used || 0),
                                     usage: node!.disk?.total ? (node!.disk.used / node!.disk.total) : 0
                                   }}
+                                  thresholds={diskThresholds()}
                                 />
                               }
                             >
@@ -707,6 +719,7 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                                 resourceId={metricsKey}
                                 isRunning={online}
                                 showMobile={false}
+                                thresholds={diskThresholds()}
                               />
                             </Show>
                           </Show>
@@ -751,8 +764,8 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                                         value={value}
                                         min={min}
                                         max={max}
-                                        critical={temperatureThreshold()}
-                                        warning={Math.max(0, temperatureThreshold() - 5)}
+                                        critical={temperatureThresholds()?.critical ?? alertsActivation.getTemperatureThreshold()}
+                                        warning={temperatureThresholds()?.warning ?? Math.max(0, alertsActivation.getTemperatureThreshold() - 5)}
                                       />
                                     </div>
                                   );
@@ -761,8 +774,8 @@ export const NodeSummaryTable: Component<NodeSummaryTableProps> = (props) => {
                                 return (
                                   <TemperatureGauge
                                     value={value}
-                                    critical={temperatureThreshold()}
-                                    warning={Math.max(0, temperatureThreshold() - 5)}
+                                    critical={temperatureThresholds()?.critical ?? alertsActivation.getTemperatureThreshold()}
+                                    warning={temperatureThresholds()?.warning ?? Math.max(0, alertsActivation.getTemperatureThreshold() - 5)}
                                   />
                                 );
                               })()}

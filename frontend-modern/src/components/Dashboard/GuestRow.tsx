@@ -490,6 +490,7 @@ interface GuestRowProps {
 
 export function GuestRow(props: GuestRowProps) {
   const guestId = createMemo(() => buildGuestId(props.guest));
+  const alertsActivation = useAlertsActivation();
 
   // Use breakpoint hook directly for responsive behavior
   const { isMobile } = useBreakpoint();
@@ -515,6 +516,9 @@ export function GuestRow(props: GuestRowProps) {
     const kind = props.guest.type === 'qemu' ? 'vm' : 'container';
     return buildMetricKey(kind, guestId());
   });
+  const cpuThresholds = createMemo(() => alertsActivation.getMetricThresholds('guest', 'cpu', guestId()));
+  const memoryThresholds = createMemo(() => alertsActivation.getMetricThresholds('guest', 'memory', guestId()));
+  const diskThresholds = createMemo(() => alertsActivation.getMetricThresholds('guest', 'disk', guestId()));
 
   // Get anomalies for this guest's metrics (deterministic, no LLM)
   const cpuAnomaly = useAnomalyForMetric(() => props.guest.id, () => 'cpu');
@@ -826,6 +830,7 @@ export function GuestRow(props: GuestRowProps) {
               <EnhancedCPUBar
                 usage={cpuPercent()}
                 cores={isMobile() ? undefined : props.guest.cpus}
+                thresholds={cpuThresholds()}
                 resourceId={metricsKey()}
                 anomaly={cpuAnomaly()}
               />
@@ -847,6 +852,7 @@ export function GuestRow(props: GuestRowProps) {
                     balloon={props.guest.memory?.balloon || 0}
                     swapUsed={props.guest.memory?.swapUsed || 0}
                     swapTotal={props.guest.memory?.swapTotal || 0}
+                    thresholds={memoryThresholds()}
                     resourceId={metricsKey()}
                     anomaly={memoryAnomaly()}
                   />
@@ -859,6 +865,7 @@ export function GuestRow(props: GuestRowProps) {
                   sublabel={memoryUsageLabel()}
                   isRunning={isRunning()}
                   showMobile={false}
+                  thresholds={memoryThresholds()}
                 />
               </Show>
             </div>
@@ -884,6 +891,7 @@ export function GuestRow(props: GuestRowProps) {
                   <StackedDiskBar
                     disks={props.guest.disks}
                     aggregateDisk={props.guest.disk}
+                    thresholds={diskThresholds()}
                     anomaly={diskAnomaly()}
                   />
                 }
@@ -894,6 +902,7 @@ export function GuestRow(props: GuestRowProps) {
                   resourceId={metricsKey()}
                   isRunning={isRunning()}
                   showMobile={false}
+                  thresholds={diskThresholds()}
                 />
               </Show>
             </Show>

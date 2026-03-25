@@ -1326,6 +1326,7 @@ interface HostRowProps {
 const HostRow: Component<HostRowProps> = (props) => {
   // NOTE: Do NOT destructure props.host - it breaks SolidJS reactivity!
   // Always access props.host directly to ensure updates flow through.
+  const alertsActivation = useAlertsActivation();
 
   const [localCustomUrl, setLocalCustomUrl] = createSignal<string | undefined>(props.customUrl);
   // Sync local state when parent prop changes (e.g., drawer edits URL)
@@ -1384,6 +1385,9 @@ const HostRow: Component<HostRowProps> = (props) => {
   const isOnline = () => props.host.status === 'online';
   const cpuPercent = () => props.host.cpuUsage ?? 0;
   const diskStats = () => props.getDiskStats(props.host);
+  const cpuThresholds = createMemo(() => alertsActivation.getMetricThresholds('host', 'cpu', props.host.id));
+  const memoryThresholds = createMemo(() => alertsActivation.getMetricThresholds('host', 'memory', props.host.id));
+  const diskThresholds = createMemo(() => alertsActivation.getMetricThresholds('host', 'disk', props.host.id));
 
   const rowClass = () => {
     const base = 'transition-all duration-200 cursor-pointer';
@@ -1455,6 +1459,7 @@ const HostRow: Component<HostRowProps> = (props) => {
                 usage={cpuPercent()}
                 loadAverage={props.host.loadAverage?.[0]}
                 cores={props.isMobile() ? undefined : props.host.cpuCount}
+                thresholds={cpuThresholds()}
                 resourceId={buildMetricKey('host', props.host.id)}
               />
             </Show>
@@ -1472,6 +1477,7 @@ const HostRow: Component<HostRowProps> = (props) => {
                 balloon={props.host.memory?.balloon || 0}
                 swapUsed={props.host.memory?.swapUsed || 0}
                 swapTotal={props.host.memory?.swapTotal || 0}
+                thresholds={memoryThresholds()}
                 resourceId={buildMetricKey('host', props.host.id)}
               />
             </Show>
@@ -1485,6 +1491,7 @@ const HostRow: Component<HostRowProps> = (props) => {
               <StackedDiskBar
                 disks={props.host.disks}
                 mode="mini"
+                thresholds={diskThresholds()}
                 aggregateDisk={{
                   total: diskStats().total,
                   used: diskStats().used,

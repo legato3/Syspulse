@@ -5,6 +5,11 @@ import { Sparkline } from '@/components/shared/Sparkline';
 import { useMetricsViewMode } from '@/stores/metricsViewMode';
 import { getMetricHistoryForRange, getMetricsVersion } from '@/stores/metricsHistory';
 import type { AnomalyReport } from '@/types/aiIntelligence';
+import {
+    getDefaultMetricDisplayThresholds,
+    getMetricSeverity,
+    type MetricDisplayThresholds,
+} from '@/utils/alertThresholds';
 
 interface StackedMemoryBarProps {
     used: number;
@@ -15,6 +20,7 @@ interface StackedMemoryBarProps {
     balloon?: number;
     resourceId?: string; // Required for sparkline mode to fetch history
     anomaly?: AnomalyReport | null;  // Baseline anomaly if detected
+    thresholds?: MetricDisplayThresholds | null;
 }
 
 // Anomaly severity colors
@@ -34,9 +40,19 @@ const MEMORY_COLORS = {
 };
 
 // Threshold-based colors for memory usage (matches disk bar behavior)
-const getMemoryColor = (percent: number): string => {
-    if (percent >= 90) return 'rgba(239, 68, 68, 0.7)';   // red
-    if (percent >= 70) return 'rgba(234, 179, 8, 0.7)';   // yellow/orange
+const getMemoryColor = (
+    percent: number,
+    thresholds?: MetricDisplayThresholds | null,
+): string => {
+    const resolvedThresholds = thresholds === undefined
+        ? getDefaultMetricDisplayThresholds('memory')
+        : thresholds;
+    const severity = getMetricSeverity(
+        percent,
+        resolvedThresholds,
+    );
+    if (severity === 'red') return 'rgba(239, 68, 68, 0.7)';   // red
+    if (severity === 'yellow') return 'rgba(234, 179, 8, 0.7)';   // yellow/orange
     return 'rgba(34, 197, 94, 0.6)';                      // green
 };
 
@@ -102,7 +118,12 @@ export function StackedMemoryBar(props: StackedMemoryBarProps) {
         const segs: Array<{ type: string; bytes: number; percent: number; color: string }> = [];
 
         // Always show the used segment
-        segs.push({ type: 'Used', bytes: props.used, percent: usedPercent, color: getMemoryColor(usedPercent) });
+        segs.push({
+            type: 'Used',
+            bytes: props.used,
+            percent: usedPercent,
+            color: getMemoryColor(usedPercent, props.thresholds),
+        });
 
         // Reclaimable segment (buff/cache) — shown as muted amber
         if (cache > 0) {

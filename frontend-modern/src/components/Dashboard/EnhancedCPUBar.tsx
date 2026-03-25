@@ -5,6 +5,11 @@ import { useMetricsViewMode } from '@/stores/metricsViewMode';
 import { getMetricHistoryForRange, getMetricsVersion } from '@/stores/metricsHistory';
 import { Sparkline } from '@/components/shared/Sparkline';
 import type { AnomalyReport } from '@/types/aiIntelligence';
+import {
+    getDefaultMetricDisplayThresholds,
+    getMetricSeverity,
+    type MetricDisplayThresholds,
+} from '@/utils/alertThresholds';
 
 interface EnhancedCPUBarProps {
     usage: number;          // CPU Usage % (0-100)
@@ -13,6 +18,7 @@ interface EnhancedCPUBarProps {
     model?: string;         // CPU Model name (for tooltip)
     resourceId?: string;    // For sparkline history
     anomaly?: AnomalyReport | null;  // Baseline anomaly if detected
+    thresholds?: MetricDisplayThresholds | null;
 }
 
 // Anomaly severity colors
@@ -29,9 +35,19 @@ export function EnhancedCPUBar(props: EnhancedCPUBarProps) {
     let containerRef: HTMLDivElement | undefined;
 
     // Bar color based on usage
+    const severity = createMemo(() => {
+        const thresholds = props.thresholds === undefined
+            ? getDefaultMetricDisplayThresholds('cpu')
+            : props.thresholds;
+        return getMetricSeverity(
+            props.usage,
+            thresholds,
+        );
+    });
+
     const barColor = createMemo(() => {
-        if (props.usage >= 90) return 'bg-red-500/60 dark:bg-red-500/50';
-        if (props.usage >= 80) return 'bg-yellow-500/60 dark:bg-yellow-500/50';
+        if (severity() === 'red') return 'bg-red-500/60 dark:bg-red-500/50';
+        if (severity() === 'yellow') return 'bg-yellow-500/60 dark:bg-yellow-500/50';
         return 'bg-green-500/60 dark:bg-green-500/50';
     });
 
@@ -124,7 +140,7 @@ export function EnhancedCPUBar(props: EnhancedCPUBarProps) {
 
                                     <div class="flex justify-between gap-3 py-0.5">
                                         <span class="text-gray-400">Usage</span>
-                                        <span class={`font-medium ${props.usage > 90 ? 'text-red-400' : 'text-gray-200'}`}>
+                                        <span class={`font-medium ${severity() === 'red' ? 'text-red-400' : severity() === 'yellow' ? 'text-yellow-300' : 'text-gray-200'}`}>
                                             {formatPercent(props.usage)}
                                         </span>
                                     </div>

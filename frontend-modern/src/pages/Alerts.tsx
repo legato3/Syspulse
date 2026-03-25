@@ -31,6 +31,13 @@ import History from 'lucide-solid/icons/history';
 import Gauge from 'lucide-solid/icons/gauge';
 import Send from 'lucide-solid/icons/send';
 import Calendar from 'lucide-solid/icons/calendar';
+import {
+  FACTORY_DOCKER_DEFAULTS,
+  FACTORY_GUEST_DEFAULTS,
+  FACTORY_HOST_DEFAULTS,
+  FACTORY_NODE_DEFAULTS,
+  FACTORY_PBS_DEFAULTS,
+} from '@/utils/alertThresholds';
 
 type AlertTab = 'overview' | 'thresholds' | 'destinations' | 'schedule' | 'history';
 
@@ -1475,46 +1482,6 @@ export function Alerts() {
     },
   );
 
-  // Factory defaults - constants for reset functionality
-  const FACTORY_GUEST_DEFAULTS = {
-    cpu: 80,
-    memory: 85,
-    disk: 90,
-    diskRead: -1,
-    diskWrite: -1,
-    networkIn: -1,
-    networkOut: -1,
-  };
-
-  const FACTORY_NODE_DEFAULTS = {
-    cpu: 80,
-    memory: 85,
-    disk: 90,
-    temperature: 80,
-  };
-  const FACTORY_PBS_DEFAULTS = {
-    cpu: 80,
-    memory: 85,
-  };
-
-  const FACTORY_HOST_DEFAULTS = {
-    cpu: 80,
-    memory: 85,
-    disk: 90,
-    diskTemperature: 55,
-  };
-
-  const FACTORY_DOCKER_DEFAULTS = {
-    cpu: 80,
-    memory: 85,
-    disk: 85,
-    restartCount: 3,
-    restartWindow: 300,
-    memoryWarnPct: 90,
-    memoryCriticalPct: 95,
-    serviceWarnGapPercent: 10,
-    serviceCriticalGapPercent: 50,
-  };
   const FACTORY_DOCKER_STATE_DISABLE_CONNECTIVITY = false;
   const FACTORY_DOCKER_STATE_SEVERITY: 'warning' | 'critical' = 'warning';
 
