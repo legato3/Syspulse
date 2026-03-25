@@ -166,6 +166,41 @@ func TestCheckMetricClearsAlertWhenThresholdDisabled(t *testing.T) {
 	}
 }
 
+func TestGetActiveAlertsKeepsInstanceScopedNodeDisplayNames(t *testing.T) {
+	m := newTestManager(t)
+	m.ClearActiveAlerts()
+	m.mu.Lock()
+	m.config.TimeThreshold = 0
+	m.config.TimeThresholds = map[string]int{}
+	m.config.SuppressionWindow = 0
+	m.config.MinimumDelta = 0
+	m.mu.Unlock()
+
+	threshold := &HysteresisThreshold{Trigger: 80, Clear: 70}
+
+	m.UpdateNodeDisplayName("cluster-a", "pve", "Alpha")
+	m.UpdateNodeDisplayName("cluster-b", "pve", "Beta")
+
+	m.checkMetric("guest-a", "vm-a", "pve", "cluster-a", "guest", "cpu", 90, threshold, nil)
+	m.checkMetric("guest-b", "vm-b", "pve", "cluster-b", "guest", "cpu", 91, threshold, nil)
+
+	m.UpdateNodeDisplayName("cluster-a", "pve", "Alpha Updated")
+	m.checkMetric("guest-a", "vm-a", "pve", "cluster-a", "guest", "cpu", 92, threshold, nil)
+	m.checkMetric("guest-b", "vm-b", "pve", "cluster-b", "guest", "cpu", 93, threshold, nil)
+
+	gotByID := make(map[string]Alert)
+	for _, alert := range m.GetActiveAlerts() {
+		gotByID[alert.ID] = alert
+	}
+
+	if got := gotByID["guest-a-cpu"].NodeDisplayName; got != "Alpha Updated" {
+		t.Fatalf("guest-a NodeDisplayName = %q, want %q", got, "Alpha Updated")
+	}
+	if got := gotByID["guest-b-cpu"].NodeDisplayName; got != "Beta" {
+		t.Fatalf("guest-b NodeDisplayName = %q, want %q", got, "Beta")
+	}
+}
+
 func TestCheckGuestSkipsAlertsWhenMetricDisabled(t *testing.T) {
 	m := newTestManager(t)
 

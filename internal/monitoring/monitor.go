@@ -6647,7 +6647,7 @@ func (m *Monitor) pollPVEInstance(ctx context.Context, instanceName string, clie
 	// a guest would show the raw Proxmox node name.
 	for i := range modelNodes {
 		if modelNodes[i].DisplayName != "" {
-			m.alertManager.UpdateNodeDisplayName(modelNodes[i].Name, modelNodes[i].DisplayName)
+			m.alertManager.UpdateNodeDisplayName(modelNodes[i].Instance, modelNodes[i].Name, modelNodes[i].DisplayName)
 		}
 	}
 

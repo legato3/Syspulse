@@ -543,10 +543,11 @@ type Manager struct {
 	// When a host agent is running on a Proxmox node, we prefer the host agent
 	// alerts and suppress the node alerts to avoid duplicate monitoring.
 	hostAgentHostnames map[string]struct{} // Normalized hostnames (lowercase)
-	// Node display name cache: maps raw node/host name → user-configured display name.
-	// Populated by CheckNode and CheckHost so that checkMetric (and direct alert
-	// creation sites) can resolve display names without signature changes.
-	nodeDisplayNames map[string]string
+	// Node display name caches. Proxmox nodes can share the same raw node name
+	// across multiple configured instances, so keep instance-scoped entries in
+	// addition to the legacy raw-name cache used by instance-less resources.
+	nodeDisplayNames         map[string]string
+	instanceNodeDisplayNames map[string]string
 	// License checking for Pro-only alert features
 	hasProFeature func(feature string) bool
 
@@ -604,6 +605,7 @@ func NewManagerWithDataDir(dataDir string) *Manager {
 		cleanupStop:                     make(chan struct{}),
 		hostAgentHostnames:              make(map[string]struct{}),
 		nodeDisplayNames:                make(map[string]string),
+		instanceNodeDisplayNames:        make(map[string]string),
 		config: AlertConfig{
 			Enabled:                true,
 			ActivationState:        ActivationPending,
@@ -2651,7 +2653,7 @@ func (m *Manager) CheckGuest(guest interface{}, instanceName string) {
 // CheckNode checks a node against thresholds
 func (m *Manager) CheckNode(node models.Node) {
 	// Cache display name so all alerts (including guest alerts on this node) can resolve it.
-	m.UpdateNodeDisplayName(node.Name, node.DisplayName)
+	m.UpdateNodeDisplayName(node.Instance, node.Name, node.DisplayName)
 
 	m.mu.RLock()
 	if !m.config.Enabled {
@@ -2791,26 +2793,45 @@ func (m *Manager) hasHostAgentForNode(nodeName string) bool {
 	return exists
 }
 
+func nodeDisplayNameCacheKey(instance, name string) string {
+	return strings.TrimSpace(instance) + "\x00" + strings.TrimSpace(name)
+}
+
 // UpdateNodeDisplayName caches the display name for a node/host so alerts
 // can resolve it without needing the full model object.
-func (m *Manager) UpdateNodeDisplayName(name, displayName string) {
+func (m *Manager) UpdateNodeDisplayName(instance, name, displayName string) {
+	instance = strings.TrimSpace(instance)
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return
 	}
 	displayName = strings.TrimSpace(displayName)
 	m.mu.Lock()
-	if displayName != "" && displayName != name {
-		m.nodeDisplayNames[name] = displayName
+	if instance != "" {
+		key := nodeDisplayNameCacheKey(instance, name)
+		if displayName != "" && displayName != name {
+			m.instanceNodeDisplayNames[key] = displayName
+		} else {
+			delete(m.instanceNodeDisplayNames, key)
+		}
 	} else {
-		delete(m.nodeDisplayNames, name)
+		if displayName != "" && displayName != name {
+			m.nodeDisplayNames[name] = displayName
+		} else {
+			delete(m.nodeDisplayNames, name)
+		}
 	}
 	m.mu.Unlock()
 }
 
 // resolveNodeDisplayName returns the cached display name for a node, or empty
 // string if none is set. Caller must hold m.mu (read or write).
-func (m *Manager) resolveNodeDisplayName(node string) string {
+func (m *Manager) resolveNodeDisplayName(instance, node string) string {
+	if instance = strings.TrimSpace(instance); instance != "" {
+		if displayName, ok := m.instanceNodeDisplayNames[nodeDisplayNameCacheKey(instance, node)]; ok {
+			return displayName
+		}
+	}
 	return m.nodeDisplayNames[node]
 }
 
@@ -2947,7 +2968,7 @@ func (m *Manager) CheckHost(host models.Host) {
 	}
 
 	// Cache display name so host alerts show the user-configured name.
-	m.UpdateNodeDisplayName(host.Hostname, host.DisplayName)
+	m.UpdateNodeDisplayName("", host.Hostname, host.DisplayName)
 
 	// Fresh telemetry marks the host as online and clears offline tracking.
 	m.HandleHostOnline(host)
@@ -3183,7 +3204,7 @@ func (m *Manager) CheckHost(host models.Host) {
 						ResourceID:      raidResourceID,
 						ResourceName:    raidName,
 						Node:            nodeName,
-						NodeDisplayName: m.resolveNodeDisplayName(nodeName),
+						NodeDisplayName: m.resolveNodeDisplayName(instanceName, nodeName),
 						Instance:        instanceName,
 						Message:         msg,
 						Value:           float64(array.FailedDevices),
@@ -6770,7 +6791,7 @@ func (m *Manager) checkMetric(resourceID, resourceName, node, instance, resource
 				ResourceID:      resourceID,
 				ResourceName:    resourceName,
 				Node:            node,
-				NodeDisplayName: m.resolveNodeDisplayName(node),
+				NodeDisplayName: m.resolveNodeDisplayName(instance, node),
 				Instance:        instance,
 				Message:         message,
 				Value:           value,
@@ -6860,7 +6881,7 @@ func (m *Manager) checkMetric(resourceID, resourceName, node, instance, resource
 			existingAlert.LastSeen = time.Now()
 			existingAlert.Value = value
 			// Keep display name current (handles upgrades and renames).
-			if dn := m.resolveNodeDisplayName(existingAlert.Node); dn != "" {
+			if dn := m.resolveNodeDisplayName(existingAlert.Instance, existingAlert.Node); dn != "" {
 				existingAlert.NodeDisplayName = dn
 			}
 			if existingAlert.Metadata == nil {
@@ -7162,7 +7183,7 @@ func (m *Manager) preserveAlertState(alertID string, updated *Alert) {
 
 	// Auto-resolve node display name if not already set.
 	if updated.NodeDisplayName == "" && updated.Node != "" {
-		updated.NodeDisplayName = m.resolveNodeDisplayName(updated.Node)
+		updated.NodeDisplayName = m.resolveNodeDisplayName(updated.Instance, updated.Node)
 	}
 
 	existing, exists := m.activeAlerts[alertID]
@@ -7234,7 +7255,7 @@ func (m *Manager) GetActiveAlerts() []Alert {
 		a := *alert
 		// Ensure display name is current (handles upgrades, renames, and
 		// alerts created before the cache was populated).
-		if dn := m.resolveNodeDisplayName(a.Node); dn != "" {
+		if dn := m.resolveNodeDisplayName(a.Instance, a.Node); dn != "" {
 			a.NodeDisplayName = dn
 		}
 		alerts = append(alerts, a)
@@ -7395,7 +7416,7 @@ func (m *Manager) checkNodeOffline(node models.Node) {
 		ResourceID:      node.ID,
 		ResourceName:    node.Name,
 		Node:            node.Name,
-		NodeDisplayName: m.resolveNodeDisplayName(node.Name),
+		NodeDisplayName: m.resolveNodeDisplayName(node.Instance, node.Name),
 		Instance:        node.Instance,
 		Message:         fmt.Sprintf("Node '%s' is offline", node.Name),
 		Value:           0, // Not applicable for offline status
@@ -7759,7 +7780,7 @@ func (m *Manager) checkPMGQueueDepths(pmg models.PMGInstance, defaults PMGThresh
 					ResourceID:      pmg.ID,
 					ResourceName:    pmg.Name,
 					Node:            pmg.Host,
-					NodeDisplayName: m.resolveNodeDisplayName(pmg.Host),
+					NodeDisplayName: m.resolveNodeDisplayName(pmg.Name, pmg.Host),
 					Instance:        pmg.Name,
 					Message:         fmt.Sprintf("PMG %s has %d total messages in queue (threshold: %d)", pmg.Name, totalQueue, threshold),
 					Value:           float64(totalQueue),
@@ -7814,7 +7835,7 @@ func (m *Manager) checkPMGQueueDepths(pmg models.PMGInstance, defaults PMGThresh
 					ResourceID:      pmg.ID,
 					ResourceName:    pmg.Name,
 					Node:            pmg.Host,
-					NodeDisplayName: m.resolveNodeDisplayName(pmg.Host),
+					NodeDisplayName: m.resolveNodeDisplayName(pmg.Name, pmg.Host),
 					Instance:        pmg.Name,
 					Message:         fmt.Sprintf("PMG %s has %d deferred messages (threshold: %d)", pmg.Name, totalDeferred, threshold),
 					Value:           float64(totalDeferred),
@@ -7869,7 +7890,7 @@ func (m *Manager) checkPMGQueueDepths(pmg models.PMGInstance, defaults PMGThresh
 					ResourceID:      pmg.ID,
 					ResourceName:    pmg.Name,
 					Node:            pmg.Host,
-					NodeDisplayName: m.resolveNodeDisplayName(pmg.Host),
+					NodeDisplayName: m.resolveNodeDisplayName(pmg.Name, pmg.Host),
 					Instance:        pmg.Name,
 					Message:         fmt.Sprintf("PMG %s has %d held messages (threshold: %d)", pmg.Name, totalHold, threshold),
 					Value:           float64(totalHold),
@@ -7950,7 +7971,7 @@ func (m *Manager) checkPMGOldestMessage(pmg models.PMGInstance, defaults PMGThre
 		ResourceID:      pmg.ID,
 		ResourceName:    pmg.Name,
 		Node:            pmg.Host,
-		NodeDisplayName: m.resolveNodeDisplayName(pmg.Host),
+		NodeDisplayName: m.resolveNodeDisplayName(pmg.Name, pmg.Host),
 		Instance:        pmg.Name,
 		Message:         fmt.Sprintf("PMG %s has messages queued for %d minutes (threshold: %d minutes)", pmg.Name, oldestMinutes, threshold),
 		Value:           float64(oldestMinutes),
@@ -8198,7 +8219,7 @@ func (m *Manager) createOrUpdateNodeAlert(alertID string, pmg models.PMGInstance
 		ResourceID:      pmg.ID,
 		ResourceName:    pmg.Name,
 		Node:            nodeName,
-		NodeDisplayName: m.resolveNodeDisplayName(nodeName),
+		NodeDisplayName: m.resolveNodeDisplayName(pmg.Name, nodeName),
 		Instance:        pmg.Name,
 		Message:         message,
 		Value:           value,
@@ -8380,7 +8401,7 @@ func (m *Manager) checkQuarantineMetric(pmg models.PMGInstance, metricType strin
 		ResourceID:      pmg.ID,
 		ResourceName:    pmg.Name,
 		Node:            pmg.Host,
-		NodeDisplayName: m.resolveNodeDisplayName(pmg.Host),
+		NodeDisplayName: m.resolveNodeDisplayName(pmg.Name, pmg.Host),
 		Instance:        pmg.Name,
 		Message:         message,
 		Value:           float64(current),
@@ -8689,7 +8710,7 @@ func (m *Manager) checkAnomalyMetric(pmg models.PMGInstance, tracker *pmgAnomaly
 			ResourceID:      pmg.ID,
 			ResourceName:    pmg.Name,
 			Node:            pmg.Host,
-			NodeDisplayName: m.resolveNodeDisplayName(pmg.Host),
+			NodeDisplayName: m.resolveNodeDisplayName(pmg.Name, pmg.Host),
 			Instance:        pmg.Name,
 			Message:         message,
 			Value:           current,
@@ -10270,7 +10291,7 @@ func (m *Manager) CheckDiskHealth(instance, node string, disk proxmox.Disk) {
 			existing.ResourceID = resourceID
 			existing.ResourceName = resourceName
 			existing.Node = node
-			existing.NodeDisplayName = m.resolveNodeDisplayName(node)
+			existing.NodeDisplayName = m.resolveNodeDisplayName(existing.Instance, node)
 			existing.Instance = instance
 			if existing.Metadata == nil {
 				existing.Metadata = map[string]interface{}{}
