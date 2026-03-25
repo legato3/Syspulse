@@ -25,8 +25,19 @@ Monitor actual disk usage inside your VMs using the QEMU Guest Agent.
 | :--- | :--- |
 | **Disk shows "-"** | Hover over the dash for details. Common causes: Agent not running, disabled in config, or permission denied. |
 | **Permission Denied** | Ensure your Proxmox token/user has `VM.GuestAgent.Audit` (PVE 9+) or `VM.Monitor` (PVE 8). |
-| **Agent Timeout** | Increase timeouts via env vars if network is slow: `GUEST_AGENT_FSINFO_TIMEOUT=10s`. |
+| **Agent Timeout** | Increase the guest-agent filesystem timeout if network or guest responsiveness is slow: `GUEST_AGENT_FSINFO_TIMEOUT=30s`. |
 | **Windows VMs** | Ensure the **QEMU Guest Agent** service is running in Windows Services. |
+
+### Large Proxmox estates
+
+If guest disk values only populate for the first part of a large VM list, tune the server poll budget as well as the guest-agent timeout:
+
+- `GUEST_AGENT_FSINFO_TIMEOUT=30s`
+- `GUEST_AGENT_VM_BUDGET=45s`
+- `GUEST_AGENT_VM_MAX_CONCURRENT=8`
+- `MAX_POLL_TIMEOUT=10m`
+
+`GUEST_AGENT_FSINFO_TIMEOUT` controls each guest-agent filesystem call. `GUEST_AGENT_VM_BUDGET` is the per-VM guest-agent work budget. `GUEST_AGENT_VM_MAX_CONCURRENT` caps how many VM guest-agent jobs Pulse runs in parallel, and `MAX_POLL_TIMEOUT` gives large clusters enough total poll time to finish a full cycle.
 
 ### Diagnostic Script
 Run this on your Proxmox host to debug specific VMs:

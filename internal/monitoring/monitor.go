@@ -892,12 +892,14 @@ type Monitor struct {
 	guestMetadataRefreshJitter time.Duration
 	guestMetadataRetryBackoff  time.Duration
 	guestMetadataHoldDuration  time.Duration
+	guestAgentWorkSlots        chan struct{}
 	// Configurable guest agent timeouts (refs #592)
 	guestAgentFSInfoTimeout  time.Duration
 	guestAgentNetworkTimeout time.Duration
 	guestAgentOSInfoTimeout  time.Duration
 	guestAgentVersionTimeout time.Duration
 	guestAgentRetries        int
+	guestAgentVMBudget       time.Duration
 	executor                 PollExecutor
 	breakerBaseRetry         time.Duration
 	breakerMaxDelay          time.Duration
@@ -4261,6 +4263,8 @@ func New(cfg *config.Config) (*Monitor, error) {
 	guestAgentOSInfoTimeout := parseDurationEnv("GUEST_AGENT_OSINFO_TIMEOUT", defaultGuestAgentOSInfoTimeout)
 	guestAgentVersionTimeout := parseDurationEnv("GUEST_AGENT_VERSION_TIMEOUT", defaultGuestAgentVersionTimeout)
 	guestAgentRetries := parseIntEnv("GUEST_AGENT_RETRIES", defaultGuestAgentRetries)
+	guestAgentVMBudget := parseDurationEnv("GUEST_AGENT_VM_BUDGET", 0)
+	guestAgentVMMaxConcurrent := parseIntEnv("GUEST_AGENT_VM_MAX_CONCURRENT", defaultGuestAgentVMMaxConcurrent)
 
 	// Initialize persistent metrics store (SQLite) with configurable retention
 	var metricsStore *metrics.Store
@@ -4379,6 +4383,7 @@ func New(cfg *config.Config) (*Monitor, error) {
 		guestAgentOSInfoTimeout:    guestAgentOSInfoTimeout,
 		guestAgentVersionTimeout:   guestAgentVersionTimeout,
 		guestAgentRetries:          guestAgentRetries,
+		guestAgentVMBudget:         guestAgentVMBudget,
 		instanceInfoCache:          make(map[string]*instanceInfo),
 		pollStatusMap:              make(map[string]*pollStatus),
 		dlqInsightMap:              make(map[string]*dlqInsight),
@@ -4452,6 +4457,9 @@ func New(cfg *config.Config) (*Monitor, error) {
 
 	if concurrency > 0 {
 		m.guestMetadataSlots = make(chan struct{}, concurrency)
+	}
+	if guestAgentVMMaxConcurrent > 0 {
+		m.guestAgentWorkSlots = make(chan struct{}, guestAgentVMMaxConcurrent)
 	}
 
 	if appriseConfig, err := m.configPersist.LoadAppriseConfig(); err == nil {
@@ -7254,6 +7262,7 @@ func (m *Monitor) pollVMsAndContainersEfficient(ctx context.Context, instanceNam
 
 	var allVMs []models.VM
 	var allContainers []models.Container
+	var vmResources []indexedClusterResource
 	templateNodeMap := make(map[int]string) // VMID -> node, for template backup orphan detection
 
 	for _, res := range resources {
@@ -7267,6 +7276,18 @@ func (m *Monitor) pollVMsAndContainersEfficient(ctx context.Context, instanceNam
 			Int("vmid", res.VMID).
 			Str("type", res.Type).
 			Msg("Processing cluster resource")
+
+		if res.Type == "qemu" {
+			if res.Template == 1 {
+				templateNodeMap[res.VMID] = res.Node
+				continue
+			}
+			vmResources = append(vmResources, indexedClusterResource{
+				order:    len(vmResources),
+				resource: res,
+			})
+			continue
+		}
 
 		// Initialize I/O metrics from cluster resources (may be 0 for VMs)
 		diskReadBytes := int64(res.DiskRead)
@@ -8198,6 +8219,69 @@ func (m *Monitor) pollVMsAndContainersEfficient(ctx context.Context, instanceNam
 
 			// Check thresholds for alerts
 			m.alertManager.CheckGuest(container, instanceName)
+		}
+	}
+
+	if len(vmResources) > 0 {
+		resultCh := make(chan efficientQEMUPollResult, len(vmResources))
+		var vmWG sync.WaitGroup
+
+		for _, entry := range vmResources {
+			vmWG.Add(1)
+			go func(entry indexedClusterResource) {
+				defer vmWG.Done()
+				vm, alertVM, snapshot, ok := m.pollEfficientQEMUResource(
+					ctx,
+					instanceName,
+					entry.resource,
+					client,
+					vmIDToHostAgent,
+					prevDiskByGuestID,
+					prevVMByGuestID,
+				)
+				resultCh <- efficientQEMUPollResult{
+					order:    entry.order,
+					vm:       vm,
+					alertVM:  alertVM,
+					snapshot: snapshot,
+					ok:       ok,
+				}
+			}(entry)
+		}
+
+		go func() {
+			vmWG.Wait()
+			close(resultCh)
+		}()
+
+		orderedVMs := make([]models.VM, len(vmResources))
+		orderedAlertVMs := make([]models.VM, len(vmResources))
+		orderedSnapshots := make([]GuestMemorySnapshot, len(vmResources))
+		orderedOK := make([]bool, len(vmResources))
+
+		for result := range resultCh {
+			if result.order < 0 || result.order >= len(vmResources) {
+				continue
+			}
+			orderedVMs[result.order] = result.vm
+			orderedAlertVMs[result.order] = result.alertVM
+			orderedSnapshots[result.order] = result.snapshot
+			orderedOK[result.order] = result.ok
+		}
+
+		for i, ok := range orderedOK {
+			if !ok {
+				continue
+			}
+			vm := orderedVMs[i]
+			alertVM := orderedAlertVMs[i]
+			snapshot := orderedSnapshots[i]
+			if m.guestMetadataStore != nil {
+				m.guestMetadataStore.GetWithLegacyMigration(vm.ID, instanceName, vm.Node, vm.VMID)
+			}
+			allVMs = append(allVMs, vm)
+			m.recordGuestSnapshot(instanceName, vm.Type, vm.Node, vm.VMID, snapshot)
+			m.alertManager.CheckGuest(alertVM, instanceName)
 		}
 	}
 

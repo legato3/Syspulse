@@ -22,13 +22,14 @@ const (
 
 	// Guest agent timeout defaults (configurable via environment variables)
 	// Increased from 3-5s to 10-15s to handle high-load environments better (refs #592)
-	defaultGuestAgentFSInfoTimeout  = 15 * time.Second // GUEST_AGENT_FSINFO_TIMEOUT
-	defaultGuestAgentNetworkTimeout = 10 * time.Second // GUEST_AGENT_NETWORK_TIMEOUT
-	defaultGuestAgentOSInfoTimeout  = 10 * time.Second // GUEST_AGENT_OSINFO_TIMEOUT
-	defaultGuestAgentVersionTimeout = 10 * time.Second // GUEST_AGENT_VERSION_TIMEOUT
-	defaultGuestAgentVMBudget       = 10 * time.Second // Hard cap per VM so one bad agent cannot starve later VMIDs (refs #1319)
-	defaultGuestAgentRetries        = 1                // GUEST_AGENT_RETRIES (0 = no retry, 1 = one retry)
-	defaultGuestAgentRetryDelay     = 500 * time.Millisecond
+	defaultGuestAgentFSInfoTimeout   = 15 * time.Second // GUEST_AGENT_FSINFO_TIMEOUT
+	defaultGuestAgentNetworkTimeout  = 10 * time.Second // GUEST_AGENT_NETWORK_TIMEOUT
+	defaultGuestAgentOSInfoTimeout   = 10 * time.Second // GUEST_AGENT_OSINFO_TIMEOUT
+	defaultGuestAgentVersionTimeout  = 10 * time.Second // GUEST_AGENT_VERSION_TIMEOUT
+	defaultGuestAgentVMBudget        = 30 * time.Second // GUEST_AGENT_VM_BUDGET
+	defaultGuestAgentVMMaxConcurrent = 8                // GUEST_AGENT_VM_MAX_CONCURRENT
+	defaultGuestAgentRetries         = 1                // GUEST_AGENT_RETRIES (0 = no retry, 1 = one retry)
+	defaultGuestAgentRetryDelay      = 500 * time.Millisecond
 
 	// Skip OS info calls after this many consecutive failures to avoid triggering buggy guest agents (refs #692)
 	guestAgentOSInfoFailureThreshold = 3
@@ -116,12 +117,81 @@ func (m *Monitor) releaseGuestMetadataSlot() {
 	}
 }
 
-func (m *Monitor) guestAgentVMContext(parent context.Context) (context.Context, context.CancelFunc) {
-	if parent == nil {
-		return context.WithTimeout(context.Background(), defaultGuestAgentVMBudget)
+func (m *Monitor) acquireGuestAgentWorkSlot(ctx context.Context) bool {
+	if m == nil || m.guestAgentWorkSlots == nil {
+		return true
+	}
+	select {
+	case m.guestAgentWorkSlots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (m *Monitor) releaseGuestAgentWorkSlot() {
+	if m == nil || m.guestAgentWorkSlots == nil {
+		return
+	}
+	select {
+	case <-m.guestAgentWorkSlots:
+	default:
+	}
+}
+
+func guestAgentCallBudget(timeout time.Duration, retries int) time.Duration {
+	if timeout <= 0 {
+		return 0
+	}
+	if retries < 0 {
+		retries = 0
+	}
+	return (timeout * time.Duration(retries+1)) + (defaultGuestAgentRetryDelay * time.Duration(retries))
+}
+
+func (m *Monitor) guestAgentMetadataBudget() time.Duration {
+	if m == nil {
+		return defaultGuestAgentVMBudget
 	}
 
-	budget := defaultGuestAgentVMBudget
+	retries := m.guestAgentRetries
+	budget := guestAgentCallBudget(m.guestAgentNetworkTimeout, retries) +
+		guestAgentCallBudget(m.guestAgentOSInfoTimeout, retries) +
+		guestAgentCallBudget(m.guestAgentVersionTimeout, retries)
+	if budget < defaultGuestAgentVMBudget {
+		budget = defaultGuestAgentVMBudget
+	}
+	return budget
+}
+
+func (m *Monitor) guestAgentFSInfoBudget() time.Duration {
+	if m == nil {
+		return defaultGuestAgentVMBudget
+	}
+
+	budget := guestAgentCallBudget(m.guestAgentFSInfoTimeout, m.guestAgentRetries)
+	if budget < defaultGuestAgentVMBudget {
+		budget = defaultGuestAgentVMBudget
+	}
+	return budget
+}
+
+func (m *Monitor) guestAgentVMContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return m.guestAgentContextWithBudget(parent, m.guestAgentMetadataBudget())
+}
+
+func (m *Monitor) guestAgentContextWithBudget(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	if budget <= 0 {
+		if m != nil && m.guestAgentVMBudget > 0 {
+			budget = m.guestAgentVMBudget
+		} else {
+			budget = defaultGuestAgentVMBudget
+		}
+	}
+	if parent == nil {
+		return context.WithTimeout(context.Background(), budget)
+	}
+
 	if deadline, ok := parent.Deadline(); ok {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -142,6 +212,10 @@ func (m *Monitor) runGuestAgentVMWork(parent context.Context, instanceName, node
 
 	ctx, cancel := m.guestAgentVMContext(parent)
 	defer cancel()
+	if !m.acquireGuestAgentWorkSlot(ctx) {
+		return
+	}
+	defer m.releaseGuestAgentWorkSlot()
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -152,6 +226,33 @@ func (m *Monitor) runGuestAgentVMWork(parent context.Context, instanceName, node
 				Int("vmid", vmid).
 				Interface("panic", recovered).
 				Msg("Recovered from guest agent processing failure; continuing with remaining VMs")
+		}
+	}()
+
+	fn(ctx)
+}
+
+func (m *Monitor) runGuestAgentFSInfoWork(parent context.Context, instanceName, nodeName, vmName string, vmid int, fn func(context.Context)) {
+	if fn == nil {
+		return
+	}
+
+	ctx, cancel := m.guestAgentContextWithBudget(parent, m.guestAgentFSInfoBudget())
+	defer cancel()
+	if !m.acquireGuestAgentWorkSlot(ctx) {
+		return
+	}
+	defer m.releaseGuestAgentWorkSlot()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Warn().
+				Str("instance", instanceName).
+				Str("node", nodeName).
+				Str("vm", vmName).
+				Int("vmid", vmid).
+				Interface("panic", recovered).
+				Msg("Recovered from guest agent filesystem processing failure; continuing with remaining VMs")
 		}
 	}()
 

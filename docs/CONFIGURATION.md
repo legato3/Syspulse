@@ -282,6 +282,8 @@ When `allowEmbedding` is `false`, Pulse sends `X-Frame-Options: DENY` and `frame
 | `GUEST_METADATA_REFRESH_JITTER` | Jitter for guest metadata refresh | `45s` |
 | `GUEST_METADATA_RETRY_BACKOFF` | Retry backoff for guest metadata | `30s` |
 | `GUEST_METADATA_MAX_CONCURRENT` | Max concurrent guest metadata fetches | `4` |
+| `GUEST_AGENT_VM_BUDGET` | Per-VM guest-agent work budget | `30s` |
+| `GUEST_AGENT_VM_MAX_CONCURRENT` | Max concurrent VM guest-agent jobs | `8` |
 | `DNS_CACHE_TIMEOUT` | Cache TTL for DNS lookups | `5m` |
 | `MAX_POLL_TIMEOUT` | Maximum time per polling cycle | `3m` |
 | `PULSE_DISABLE_DOCKER_UPDATE_ACTIONS` | Hide Docker update buttons (read-only mode) | `false` |
