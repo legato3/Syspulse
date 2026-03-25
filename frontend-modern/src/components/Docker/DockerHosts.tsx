@@ -10,6 +10,7 @@ import { DockerHostSummaryTable, type DockerHostSummary } from './DockerHostSumm
 import { DockerUnifiedTable } from './DockerUnifiedTable';
 import { DockerClusterServicesTable } from './DockerClusterServicesTable';
 import { hasSwarmClusters } from './swarmClusterHelpers';
+import { containerMatchesDockerSearch } from './dockerSearch';
 import { useWebSocket } from '@/App';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { usePersistentSignal } from '@/hooks/usePersistentSignal';
@@ -258,9 +259,13 @@ export const DockerHosts: Component<DockerHostsProps> = (props) => {
 
   const updateableContainers = createMemo(() => {
     const containers: { hostId: string; containerId: string; containerName: string }[] = [];
+    const activeHostId = selectedHostId();
+    const searchTerm = debouncedSearch();
     sortedHosts().forEach((host) => {
       if (!hostMatchesStatus(host)) return;
+      if (activeHostId && host.id !== activeHostId) return;
       host.containers?.forEach((c) => {
+        if (!containerMatchesDockerSearch(searchTerm, host, c)) return;
         if (c.updateStatus?.updateAvailable) {
           containers.push({
             hostId: host.id,

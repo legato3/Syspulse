@@ -41,6 +41,11 @@ import { UrlEditPopover, createUrlEditState } from '@/components/shared/UrlEditP
 import { showSuccess, showError } from '@/utils/toast';
 import { logger } from '@/utils/logger';
 import { useAlertsActivation } from '@/stores/alertsActivation';
+import {
+  containerMatchesDockerSearch,
+  getDockerHostDisplayName,
+  serviceMatchesDockerSearch,
+} from './dockerSearch';
 
 type DockerMetadataRecord = Record<string, DockerMetadata>;
 
@@ -75,8 +80,6 @@ type StatsFilter =
   | { type: 'container-state'; value: string }
   | { type: 'service-health'; value: string }
   | null;
-
-type SearchToken = { key?: string; value: string };
 
 type DockerRow =
   | {
@@ -189,23 +192,7 @@ const ensureMs = (value?: number | string | null): number | null => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
-const parseSearchTerm = (term?: string): SearchToken[] => {
-  if (!term) return [];
-  return term
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((token) => {
-      const [rawKey, ...rest] = token.split(':');
-      if (rest.length === 0) {
-        return { value: token.toLowerCase() };
-      }
-      return { key: rawKey.toLowerCase(), value: rest.join(':').toLowerCase() };
-    });
-};
-
-const getHostDisplayName = (host: DockerHost): string =>
-  host.customDisplayName || host.displayName || host.hostname || host.id || '';
+const getHostDisplayName = (host: DockerHost): string => getDockerHostDisplayName(host);
 
 const compareStrings = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base' });
@@ -600,144 +587,6 @@ const serviceMatchesHealthFilter = (filter: StatsFilter, service: DockerService)
   return true;
 };
 
-const containerMatchesToken = (
-  token: SearchToken,
-  host: DockerHost,
-  container: DockerContainer,
-) => {
-  const state = toLower(container.state);
-  const health = toLower(container.health);
-  const hostName = toLower(host.customDisplayName ?? host.displayName ?? host.hostname ?? host.id);
-
-  if (token.key === 'name') {
-    return (
-      toLower(container.name).includes(token.value) ||
-      toLower(container.id).includes(token.value)
-    );
-  }
-
-  if (token.key === 'image') {
-    return toLower(container.image).includes(token.value);
-  }
-
-  if (token.key === 'host') {
-    return hostName.includes(token.value);
-  }
-
-  if (token.key === 'pod') {
-    const pod = container.podman?.podName?.toLowerCase() ?? '';
-    return pod.includes(token.value);
-  }
-
-  if (token.key === 'compose') {
-    const project = container.podman?.composeProject?.toLowerCase() ?? '';
-    const service = container.podman?.composeService?.toLowerCase() ?? '';
-    return project.includes(token.value) || service.includes(token.value);
-  }
-
-  if (token.key === 'state') {
-    return state.includes(token.value) || health.includes(token.value);
-  }
-
-  // Special filter for containers with updates available
-  if (token.key === 'has' && token.value === 'update') {
-    return container.updateStatus?.updateAvailable === true;
-  }
-
-  const fields: string[] = [
-    container.name,
-    container.id,
-    container.image,
-    container.status,
-    container.state,
-    container.health,
-    host.displayName,
-    host.hostname,
-    host.id,
-  ]
-    .filter(Boolean)
-    .map((value) => value!.toLowerCase());
-
-  if (container.podman) {
-    [
-      container.podman.podName,
-      container.podman.podId,
-      container.podman.composeProject,
-      container.podman.composeService,
-      container.podman.autoUpdatePolicy,
-      container.podman.userNamespace,
-    ]
-      .filter(Boolean)
-      .forEach((value) => fields.push(value!.toLowerCase()));
-  }
-
-  if (container.labels) {
-    Object.entries(container.labels).forEach(([key, value]) => {
-      fields.push(key.toLowerCase());
-      if (value) fields.push(value.toLowerCase());
-    });
-  }
-
-  if (container.ports) {
-    container.ports.forEach((port) => {
-      const parts = [port.privatePort, port.publicPort, port.protocol, port.ip]
-        .filter(Boolean)
-        .map(String)
-        .join(':')
-        .toLowerCase();
-      if (parts) fields.push(parts);
-    });
-  }
-
-  return fields.some((field) => field.includes(token.value));
-};
-
-const serviceMatchesToken = (token: SearchToken, host: DockerHost, service: DockerService) => {
-  const hostName = toLower(host.customDisplayName ?? host.displayName ?? host.hostname ?? host.id);
-  const serviceName = toLower(service.name ?? service.id);
-  const image = toLower(service.image);
-
-  if (token.key === 'name') {
-    return serviceName.includes(token.value);
-  }
-
-  if (token.key === 'image') {
-    return image.includes(token.value);
-  }
-
-  if (token.key === 'host') {
-    return hostName.includes(token.value);
-  }
-
-  if (token.key === 'state') {
-    const desired = service.desiredTasks ?? 0;
-    const running = service.runningTasks ?? 0;
-    const status = desired > 0 && running >= desired ? 'healthy' : 'degraded';
-    return status.includes(token.value);
-  }
-
-  const fields: string[] = [
-    service.name,
-    service.id,
-    service.image,
-    service.stack,
-    service.mode,
-    host.displayName,
-    host.hostname,
-    host.id,
-  ]
-    .filter(Boolean)
-    .map((value) => value!.toLowerCase());
-
-  if (service.labels) {
-    Object.entries(service.labels).forEach(([key, value]) => {
-      fields.push(key.toLowerCase());
-      if (value) fields.push(value.toLowerCase());
-    });
-  }
-
-  return fields.some((field) => field.includes(token.value));
-};
 
 const serviceHealthBadge = (service: DockerService) => {
   const desired = service.desiredTasks ?? 0;
@@ -2253,8 +2102,6 @@ const DockerUnifiedTable: Component<DockerUnifiedTableProps> = (props) => {
   const rowCache = new Map<string, DockerRow>();
   const tasksCache = new Map<string, DockerTask[]>();
 
-
-  const tokens = createMemo(() => parseSearchTerm(props.searchTerm));
   const [sortKey, setSortKey] = usePersistentSignal<SortKey>('dockerUnifiedSortKey', 'host', {
     deserialize: (value) => (SORT_KEYS.includes(value as SortKey) ? (value as SortKey) : 'host'),
   });
@@ -2318,7 +2165,6 @@ const DockerUnifiedTable: Component<DockerUnifiedTableProps> = (props) => {
   const groupedRows = createMemo(() => {
     const groups: Array<{ host: DockerHost; rows: DockerRow[] }> = [];
     const filter = props.statsFilter ?? null;
-    const searchTokens = tokens();
     const selectedHostId = props.selectedHostId ? props.selectedHostId() : null;
     const usedCacheKeys = new Set<string>();
     const usedTaskCacheKeys = new Set<string>();
@@ -2350,8 +2196,7 @@ const DockerUnifiedTable: Component<DockerUnifiedTableProps> = (props) => {
 
       containers.forEach((container) => {
         if (!containerMatchesStateFilter(filter, container)) return;
-        const matchesSearch = searchTokens.every((token) => containerMatchesToken(token, host, container));
-        if (!matchesSearch) return;
+        if (!containerMatchesDockerSearch(props.searchTerm, host, container)) return;
 
         const rowId = container.id || `${host.id}-container-${container.name}`;
         const cacheKey = `c:${host.id}:${rowId}`;
@@ -2373,8 +2218,7 @@ const DockerUnifiedTable: Component<DockerUnifiedTableProps> = (props) => {
 
       services.forEach((service) => {
         if (!serviceMatchesHealthFilter(filter, service)) return;
-        const matchesSearch = searchTokens.every((token) => serviceMatchesToken(token, host, service));
-        if (!matchesSearch) return;
+        if (!serviceMatchesDockerSearch(props.searchTerm, host, service)) return;
 
         let associatedTasks = tasks.filter((task) => {
           if (service.id && task.serviceId) {
