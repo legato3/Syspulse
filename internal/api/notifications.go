@@ -249,6 +249,10 @@ func (h *NotificationHandlers) GetWebhooks(w http.ResponseWriter, r *http.Reques
 			whMap["template"] = webhook.Template
 		}
 
+		if webhook.Mention != "" {
+			whMap["mention"] = webhook.Mention
+		}
+
 		maskedWebhooks[i] = whMap
 	}
 
