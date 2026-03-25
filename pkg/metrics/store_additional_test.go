@@ -15,22 +15,32 @@ func TestDefaultConfig_UsesLargerWriteBuffer(t *testing.T) {
 
 func TestStoreCoalesceQueuedBatches(t *testing.T) {
 	store := &Store{
-		writeCh: make(chan []bufferedMetric, 4),
+		writeCh: make(chan writeRequest, 4),
 	}
 
-	initial := []bufferedMetric{
-		{resourceType: "vm", resourceID: "vm-1", metricType: "cpu", value: 10},
+	initial := writeRequest{
+		metrics: []bufferedMetric{
+			{resourceType: "vm", resourceID: "vm-1", metricType: "cpu", value: 10},
+		},
 	}
-	store.writeCh <- []bufferedMetric{
+	store.writeCh <- writeRequest{metrics: []bufferedMetric{
 		{resourceType: "vm", resourceID: "vm-1", metricType: "memory", value: 20},
-	}
-	store.writeCh <- []bufferedMetric{
+	}}
+	store.writeCh <- writeRequest{metrics: []bufferedMetric{
 		{resourceType: "vm", resourceID: "vm-2", metricType: "cpu", value: 30},
+	}}
+
+	combined := store.coalesceQueuedRequests(initial)
+	if len(combined) != 3 {
+		t.Fatalf("expected 3 combined requests, got %d", len(combined))
 	}
 
-	combined := store.coalesceQueuedBatches(initial)
-	if len(combined) != 3 {
-		t.Fatalf("expected 3 combined metrics, got %d", len(combined))
+	totalMetrics := 0
+	for _, req := range combined {
+		totalMetrics += len(req.metrics)
+	}
+	if totalMetrics != 3 {
+		t.Fatalf("expected 3 combined metrics, got %d", totalMetrics)
 	}
 	if len(store.writeCh) != 0 {
 		t.Fatalf("expected queued batches to be drained, got %d remaining", len(store.writeCh))
@@ -79,17 +89,7 @@ func TestStoreClear(t *testing.T) {
 	store.Write("vm", "v1", "cpu", 10.0, time.Now())
 	store.Flush()
 
-	// Wait for data to be written (Flush is async via channel)
-	deadline := time.Now().Add(2 * time.Second)
-	var stats Stats
-	for time.Now().Before(deadline) {
-		stats = store.GetStats()
-		if stats.RawCount > 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
+	stats := store.GetStats()
 	if stats.RawCount == 0 {
 		t.Fatal("expected data to be written before clearing")
 	}
@@ -152,5 +152,33 @@ func TestStoreGetMetaIntInvalid(t *testing.T) {
 	val, ok := store.getMetaInt("bad_key")
 	if ok {
 		t.Fatalf("expected getMetaInt to fail for invalid int, got %d", val)
+	}
+}
+
+func TestStoreFlushMakesQueuedWritesVisible(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	cfg.WriteBufferSize = 1
+	cfg.FlushInterval = time.Hour
+
+	store, err := NewStore(cfg)
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+	defer store.Close()
+
+	ts := time.Unix(2000, 0)
+	store.Write("node", "node-1", "cpu", 42, ts)
+
+	// With a buffer size of 1, the write above is already queued asynchronously.
+	// Flush must still wait for that queued batch to be committed.
+	store.Flush()
+
+	points, err := store.Query("node", "node-1", "cpu", ts.Add(-time.Second), ts.Add(time.Second), 0)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(points) != 1 || points[0].Value != 42 {
+		t.Fatalf("expected flushed metric to be immediately visible, got %v", points)
 	}
 }
