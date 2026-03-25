@@ -41,6 +41,8 @@ type State struct {
 	TemperatureMonitoringEnabled bool                       `json:"temperatureMonitoringEnabled"`
 	PVETagColors                 map[string]string          `json:"pveTagColors,omitempty"`
 	// templateVMIDs tracks Proxmox template VMIDs (not shown in UI, used for backup orphan detection).
+	// The presence of an instance key also acts as the readiness signal that a successful
+	// resources poll populated template inventory for that instance, even if the map is empty.
 	// Unexported so it is never serialised to JSON or the API.
 	templateVMIDs map[string]map[int]string // instance -> VMID -> node
 }
@@ -1056,7 +1058,7 @@ type Memory struct {
 	Used      int64   `json:"used"`
 	Free      int64   `json:"free"`
 	Usage     float64 `json:"usage"`
-	Cache     int64   `json:"cache,omitempty"`     // Reclaimable buff/cache (Available - Free); used + cache + free ≈ total
+	Cache     int64   `json:"cache,omitempty"` // Reclaimable buff/cache (Available - Free); used + cache + free ≈ total
 	Balloon   int64   `json:"balloon,omitempty"`
 	SwapUsed  int64   `json:"swapUsed,omitempty"`
 	SwapTotal int64   `json:"swapTotal,omitempty"`
@@ -3068,14 +3070,16 @@ func (s *State) GetContainers() []Container {
 // UpdateTemplateVMIDsForInstance stores the VMID→node mapping for Proxmox template guests
 // for a given instance. Templates are excluded from the main VM/container lists (they are not
 // monitored) but must be known to the backup orphan-detection logic so their backups are not
-// incorrectly flagged as orphaned. Pass nil or an empty map to clear the instance's entries.
+// incorrectly flagged as orphaned. Pass nil to clear the instance's entries entirely.
+// Passing an empty non-nil map records that inventory was populated and that the
+// instance currently has no templates.
 func (s *State) UpdateTemplateVMIDsForInstance(instance string, vmids map[int]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.templateVMIDs == nil {
 		s.templateVMIDs = make(map[string]map[int]string)
 	}
-	if len(vmids) == 0 {
+	if vmids == nil {
 		delete(s.templateVMIDs, instance)
 	} else {
 		s.templateVMIDs[instance] = vmids

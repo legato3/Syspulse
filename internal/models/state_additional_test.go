@@ -186,6 +186,31 @@ func TestStateLinkHostAgentToNode(t *testing.T) {
 	}
 }
 
+func TestStateSnapshotPreservesEmptyTemplateInventoryReadiness(t *testing.T) {
+	state := &State{}
+
+	state.UpdateTemplateVMIDsForInstance("instA", map[int]string{})
+
+	snapshot := state.GetSnapshot()
+	if snapshot.TemplateVMIDs == nil {
+		t.Fatalf("expected TemplateVMIDs map to be initialized in snapshot")
+	}
+
+	templates, exists := snapshot.TemplateVMIDs["instA"]
+	if !exists {
+		t.Fatalf("expected empty template inventory for instA to be preserved as readiness signal")
+	}
+	if len(templates) != 0 {
+		t.Fatalf("expected no template VMIDs for instA, got %v", templates)
+	}
+
+	state.UpdateTemplateVMIDsForInstance("instA", nil)
+	snapshot = state.GetSnapshot()
+	if _, exists := snapshot.TemplateVMIDs["instA"]; exists {
+		t.Fatalf("expected nil update to clear template inventory for instA")
+	}
+}
+
 func TestUpdateNodesForInstancePreservesLinkWhenNodeIDChanges(t *testing.T) {
 	state := &State{
 		Hosts: []Host{

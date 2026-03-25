@@ -10205,7 +10205,7 @@ func (m *Monitor) pollStorageBackupsWithNodes(ctx context.Context, instanceName 
 
 	if m.alertManager != nil {
 		snapshot := m.state.GetSnapshot()
-		guestsByKey, guestsByVMID := buildGuestLookups(snapshot, m.guestMetadataStore)
+		guestsByKey, guestsByVMID, templateInventoryReady := buildGuestLookups(snapshot, m.guestMetadataStore)
 		pveStorage := snapshot.Backups.PVE.StorageBackups
 		if len(pveStorage) == 0 && len(snapshot.PVEBackups.StorageBackups) > 0 {
 			pveStorage = snapshot.PVEBackups.StorageBackups
@@ -10218,7 +10218,7 @@ func (m *Monitor) pollStorageBackupsWithNodes(ctx context.Context, instanceName 
 		if len(pmgBackups) == 0 && len(snapshot.PMGBackups) > 0 {
 			pmgBackups = snapshot.PMGBackups
 		}
-		m.alertManager.CheckBackups(pveStorage, pbsBackups, pmgBackups, guestsByKey, guestsByVMID)
+		m.alertManager.CheckBackups(pveStorage, pbsBackups, pmgBackups, guestsByKey, guestsByVMID, templateInventoryReady)
 	}
 
 	// Clear permission warning if no permission errors occurred this cycle
@@ -10361,9 +10361,10 @@ func preserveFailedStorageBackups(instanceName string, snapshot models.StateSnap
 	return current, storages
 }
 
-func buildGuestLookups(snapshot models.StateSnapshot, metadataStore *config.GuestMetadataStore) (map[string]alerts.GuestLookup, map[string][]alerts.GuestLookup) {
+func buildGuestLookups(snapshot models.StateSnapshot, metadataStore *config.GuestMetadataStore) (map[string]alerts.GuestLookup, map[string][]alerts.GuestLookup, map[string]bool) {
 	byKey := make(map[string]alerts.GuestLookup)
 	byVMID := make(map[string][]alerts.GuestLookup)
+	templateInventoryReady := make(map[string]bool)
 
 	for _, vm := range snapshot.VMs {
 		info := alerts.GuestLookup{
@@ -10418,6 +10419,7 @@ func buildGuestLookups(snapshot models.StateSnapshot, metadataStore *config.Gues
 	// existing templates as orphaned. Templates are excluded from the main VM/container
 	// lists (they are not monitored), so without this they would appear as unknown guests.
 	for instance, vmids := range snapshot.TemplateVMIDs {
+		templateInventoryReady[instance] = true
 		for vmid, node := range vmids {
 			info := alerts.GuestLookup{
 				ResourceID: makeGuestID(instance, node, vmid),
@@ -10434,7 +10436,7 @@ func buildGuestLookups(snapshot models.StateSnapshot, metadataStore *config.Gues
 		}
 	}
 
-	return byKey, byVMID
+	return byKey, byVMID, templateInventoryReady
 }
 
 // enrichWithPersistedMetadata adds entries from the metadata store for guests
@@ -11282,7 +11284,7 @@ func (m *Monitor) pollPBSBackups(ctx context.Context, instanceName string, clien
 
 	if m.alertManager != nil {
 		snapshot := m.state.GetSnapshot()
-		guestsByKey, guestsByVMID := buildGuestLookups(snapshot, m.guestMetadataStore)
+		guestsByKey, guestsByVMID, templateInventoryReady := buildGuestLookups(snapshot, m.guestMetadataStore)
 		pveStorage := snapshot.Backups.PVE.StorageBackups
 		if len(pveStorage) == 0 && len(snapshot.PVEBackups.StorageBackups) > 0 {
 			pveStorage = snapshot.PVEBackups.StorageBackups
@@ -11295,7 +11297,7 @@ func (m *Monitor) pollPBSBackups(ctx context.Context, instanceName string, clien
 		if len(pmgBackups) == 0 && len(snapshot.PMGBackups) > 0 {
 			pmgBackups = snapshot.PMGBackups
 		}
-		m.alertManager.CheckBackups(pveStorage, pbsBackups, pmgBackups, guestsByKey, guestsByVMID)
+		m.alertManager.CheckBackups(pveStorage, pbsBackups, pmgBackups, guestsByKey, guestsByVMID, templateInventoryReady)
 	}
 
 	// Immediately broadcast the updated state so frontend sees new backups
@@ -11547,7 +11549,7 @@ func (m *Monitor) checkMockAlerts() {
 		Msg("Collecting resources for alert cleanup in mock mode")
 	m.alertManager.CleanupAlertsForNodes(existingNodes)
 
-	guestsByKey, guestsByVMID := buildGuestLookups(state, m.guestMetadataStore)
+	guestsByKey, guestsByVMID, templateInventoryReady := buildGuestLookups(state, m.guestMetadataStore)
 	pveStorage := state.Backups.PVE.StorageBackups
 	if len(pveStorage) == 0 && len(state.PVEBackups.StorageBackups) > 0 {
 		pveStorage = state.PVEBackups.StorageBackups
@@ -11560,7 +11562,7 @@ func (m *Monitor) checkMockAlerts() {
 	if len(pmgBackups) == 0 && len(state.PMGBackups) > 0 {
 		pmgBackups = state.PMGBackups
 	}
-	m.alertManager.CheckBackups(pveStorage, pbsBackups, pmgBackups, guestsByKey, guestsByVMID)
+	m.alertManager.CheckBackups(pveStorage, pbsBackups, pmgBackups, guestsByKey, guestsByVMID, templateInventoryReady)
 
 	// Limit how many guests we check per cycle to prevent blocking with large datasets
 	const maxGuestsPerCycle = 50

@@ -976,7 +976,7 @@ func TestCheckBackupsCreatesAndClearsAlerts(t *testing.T) {
 		"100": {guestsByKey[key]},
 	}
 
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	alert, exists := m.activeAlerts["backup-age-"+sanitizeAlertKey(key)]
@@ -990,7 +990,7 @@ func TestCheckBackupsCreatesAndClearsAlerts(t *testing.T) {
 
 	// Recent backup clears alert
 	storageBackups[0].Time = now
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	_, exists = m.activeAlerts["backup-age-"+sanitizeAlertKey(key)]
@@ -1044,7 +1044,7 @@ func TestCheckBackupsRespectsOverrides(t *testing.T) {
 	}
 
 	// 1. Verify warning alert is created with defaults
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 	m.mu.RLock()
 	alert, exists := m.activeAlerts["backup-age-"+sanitizeAlertKey(key)]
 	m.mu.RUnlock()
@@ -1064,7 +1064,7 @@ func TestCheckBackupsRespectsOverrides(t *testing.T) {
 	}
 	m.UpdateConfig(cfg)
 
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 	m.mu.RLock()
 	_, exists = m.activeAlerts["backup-age-"+sanitizeAlertKey(key)]
 	m.mu.RUnlock()
@@ -1081,7 +1081,7 @@ func TestCheckBackupsRespectsOverrides(t *testing.T) {
 		},
 	}
 	m.UpdateConfig(cfg)
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 	m.mu.RLock()
 	_, exists = m.activeAlerts["backup-age-"+sanitizeAlertKey(key)]
 	m.mu.RUnlock()
@@ -1095,7 +1095,7 @@ func TestCheckBackupsRespectsOverrides(t *testing.T) {
 	}
 	m.UpdateConfig(cfg)
 	storageBackups[0].Time = now.Add(-30 * 24 * time.Hour) // Way past defaults
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 	m.mu.RLock()
 	_, exists = m.activeAlerts["backup-age-"+sanitizeAlertKey(key)]
 	m.mu.RUnlock()
@@ -1138,7 +1138,7 @@ func TestCheckBackupsHandlesPbsOnlyGuests(t *testing.T) {
 		"9999": {guestsByKey[sentinelKey]},
 	}
 
-	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	found := false
@@ -1217,7 +1217,7 @@ func TestCheckBackupsDisambiguatesWithNamespace(t *testing.T) {
 		},
 	}
 
-	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1299,7 +1299,7 @@ func TestCheckBackupsVMIDCollisionNonMatchingNamespace(t *testing.T) {
 		},
 	}
 
-	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1378,7 +1378,7 @@ func TestCheckBackupsVMIDCollisionNoNamespace(t *testing.T) {
 		},
 	}
 
-	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(nil, pbsBackups, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1426,7 +1426,7 @@ func TestCheckBackupsHandlesPmgBackups(t *testing.T) {
 		},
 	}
 
-	m.CheckBackups(nil, nil, pmgBackups, map[string]GuestLookup{}, map[string][]GuestLookup{})
+	m.CheckBackups(nil, nil, pmgBackups, map[string]GuestLookup{}, map[string][]GuestLookup{}, nil)
 
 	m.mu.RLock()
 	found := false
@@ -1483,7 +1483,7 @@ func TestCheckBackupsSkipsOrphanedWhenDisabled(t *testing.T) {
 		"9999": {guestsByKey[sentinelKey]},
 	}
 
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1537,7 +1537,7 @@ func TestCheckBackupsCreatesOrphanedAlert(t *testing.T) {
 		"9999": {guestsByKey[sentinelKey]},
 	}
 
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1609,7 +1609,7 @@ func TestCheckBackupsOrphanedAlertClearsWhenGuestReappears(t *testing.T) {
 	}
 
 	// First cycle: guest 300 absent (only sentinel present) → orphaned alert fires.
-	m.CheckBackups(storageBackups, nil, nil, sentinelByKey, sentinelByVMID)
+	m.CheckBackups(storageBackups, nil, nil, sentinelByKey, sentinelByVMID, nil)
 
 	m.mu.RLock()
 	orphanedFound := false
@@ -1631,7 +1631,7 @@ func TestCheckBackupsOrphanedAlertClearsWhenGuestReappears(t *testing.T) {
 	guestsByVMID := map[string][]GuestLookup{
 		"300": {guestsByKey[guestKey]},
 	}
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1690,7 +1690,7 @@ func TestCheckBackupsOrphanedIgnoresVMIDs(t *testing.T) {
 	}
 
 	// Both are orphaned (not in inventory), but VMID 200 matches ignore pattern "20*".
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1749,7 +1749,7 @@ func TestCheckBackupsOrphanedWithZeroAgeThresholds(t *testing.T) {
 	}
 
 	// Orphaned guest with zero age thresholds — should still fire orphaned alert.
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1815,7 +1815,7 @@ func TestCheckBackupsOrphanedWithPersistedMetadata(t *testing.T) {
 		"9999": {guestsByKey[sentinelKey]},
 	}
 
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1863,7 +1863,7 @@ func TestCheckBackupsOrphanedSkippedWhenNoLiveInventory(t *testing.T) {
 	}
 
 	// Completely empty guest maps — no live inventory.
-	m.CheckBackups(storageBackups, nil, nil, map[string]GuestLookup{}, map[string][]GuestLookup{})
+	m.CheckBackups(storageBackups, nil, nil, map[string]GuestLookup{}, map[string][]GuestLookup{}, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1914,7 +1914,7 @@ func TestCheckBackupsOrphanedPreservedWhenNoLiveInventory(t *testing.T) {
 	guestsByVMID := map[string][]GuestLookup{
 		"9999": {guestsByKey[sentinelKey]},
 	}
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	orphanFound := false
@@ -1929,7 +1929,7 @@ func TestCheckBackupsOrphanedPreservedWhenNoLiveInventory(t *testing.T) {
 	}
 
 	// Second cycle: inventory disappears (empty maps) — orphan alert must be preserved.
-	m.CheckBackups(storageBackups, nil, nil, map[string]GuestLookup{}, map[string][]GuestLookup{})
+	m.CheckBackups(storageBackups, nil, nil, map[string]GuestLookup{}, map[string][]GuestLookup{}, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1990,7 +1990,7 @@ func TestCheckBackupsOrphanedCrossInstanceVMID(t *testing.T) {
 		"9999": {guestsByKey[sentinelA]},
 	}
 
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -2002,6 +2002,64 @@ func TestCheckBackupsOrphanedCrossInstanceVMID(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected backup-orphaned alert for instA even though instB has a live guest with the same VMID")
+	}
+}
+
+func TestCheckBackupsSkipsPVEOrphanDetectionUntilTemplateInventoryReady(t *testing.T) {
+	m := newTestManager(t)
+	m.ClearActiveAlerts()
+
+	alertOrphaned := true
+	m.mu.Lock()
+	m.config.Enabled = true
+	m.config.BackupDefaults = BackupAlertConfig{
+		Enabled:       true,
+		WarningDays:   7,
+		CriticalDays:  14,
+		AlertOrphaned: &alertOrphaned,
+		IgnoreVMIDs:   []string{},
+	}
+	m.mu.Unlock()
+
+	now := time.Now()
+	storageBackups := []models.StorageBackup{
+		{
+			ID:       "instA-node2-700-backup",
+			Storage:  "local",
+			Node:     "node2",
+			Instance: "instA",
+			Type:     "qemu",
+			VMID:     700,
+			Time:     now.Add(-1 * 24 * time.Hour),
+		},
+	}
+
+	// Simulate the startup/concurrency window where the instance has enough live
+	// guest data to satisfy the legacy readiness heuristic, but template inventory
+	// has not been populated yet. This backup must not be treated as orphaned.
+	sentinelKey := BuildGuestKey("instA", "node3", 9999)
+	guestsByKey := map[string]GuestLookup{
+		sentinelKey: {
+			ResourceID: "qemu/9999",
+			Name:       "sentinel-vm",
+			Instance:   "instA",
+			Node:       "node3",
+			Type:       "qemu",
+			VMID:       9999,
+		},
+	}
+	guestsByVMID := map[string][]GuestLookup{
+		"9999": {guestsByKey[sentinelKey]},
+	}
+
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, map[string]bool{})
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for id := range m.activeAlerts {
+		if strings.HasPrefix(id, "backup-orphaned-") {
+			t.Fatalf("expected no orphaned alert before template inventory is ready, found %s", id)
+		}
 	}
 }
 
@@ -2054,7 +2112,7 @@ func TestCheckBackupsIgnoresVMIDs(t *testing.T) {
 		"200": {guestsByKey[keyAllowed]},
 	}
 
-	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID)
+	m.CheckBackups(storageBackups, nil, nil, guestsByKey, guestsByVMID, nil)
 
 	m.mu.RLock()
 	_, ignoredExists := m.activeAlerts["backup-age-"+sanitizeAlertKey(keyIgnored)]

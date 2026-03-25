@@ -5562,6 +5562,7 @@ func (m *Manager) CheckBackups(
 	pmgBackups []models.PMGBackup,
 	guestsByKey map[string]GuestLookup,
 	guestsByVMID map[string][]GuestLookup,
+	templateInventoryReady map[string]bool,
 ) {
 	m.mu.RLock()
 	enabled := m.config.Enabled
@@ -5763,16 +5764,24 @@ func (m *Manager) CheckBackups(
 		return
 	}
 
-	// Build a set of instances that have at least one live guest (non-empty
-	// ResourceID). Orphan detection is only safe for instances whose guest
-	// list has been populated — if an instance hasn't been polled yet
-	// (startup race, auth failure, staggered polling), every backup from
-	// that instance would look orphaned.
-	instancesWithLiveGuests := make(map[string]bool)
-	for _, guests := range guestsByVMID {
-		for _, g := range guests {
-			if g.ResourceID != "" && g.Instance != "" {
-				instancesWithLiveGuests[g.Instance] = true
+	// Build a set of instances whose inventory is safe to use for orphan detection.
+	// When the monitor provides a template-inventory readiness map, prefer that
+	// signal because backup polling can race ahead of template discovery even when
+	// live guests already exist on the instance. Fall back to the legacy "has at
+	// least one live guest" heuristic for direct callers/tests that do not pass it.
+	instancesReadyForOrphanDetection := make(map[string]bool)
+	if templateInventoryReady != nil {
+		for instance, ready := range templateInventoryReady {
+			if ready {
+				instancesReadyForOrphanDetection[instance] = true
+			}
+		}
+	} else {
+		for _, guests := range guestsByVMID {
+			for _, g := range guests {
+				if g.ResourceID != "" && g.Instance != "" {
+					instancesReadyForOrphanDetection[g.Instance] = true
+				}
 			}
 		}
 	}
@@ -5812,15 +5821,15 @@ func (m *Manager) CheckBackups(
 			continue
 		}
 		// Determine whether we have enough inventory to safely run orphan
-		// detection for this backup.  For PVE storage backups the instance
+		// detection for this backup. For PVE storage backups the instance
 		// guard is strict: only check when that specific PVE instance has
-		// been polled.  For PBS/PMG backups (which span instances) it's
-		// enough that *any* instance has live guests.
+		// completed a template-aware inventory poll. For PBS/PMG backups
+		// (which span instances) it's enough that any instance is ready.
 		inventoryReady := false
 		if record.source == "PVE storage" {
-			inventoryReady = instancesWithLiveGuests[record.instance]
+			inventoryReady = instancesReadyForOrphanDetection[record.instance]
 		} else {
-			inventoryReady = len(instancesWithLiveGuests) > 0
+			inventoryReady = len(instancesReadyForOrphanDetection) > 0
 		}
 		if record.vmid != "" && record.lookup.ResourceID == "" && inventoryReady {
 			// Backup has a VMID but no matching live guest in its lookup.
@@ -6157,9 +6166,9 @@ func (m *Manager) CheckBackups(
 		if _, ok := validAlerts[alertID]; ok {
 			continue
 		}
-		// When no instances have live inventory, preserve existing orphan
+		// When no instances have inventory ready for orphan detection, preserve existing orphan
 		// alerts rather than clearing them — we can't confirm they're resolved.
-		if len(instancesWithLiveGuests) == 0 && alert.Type == "backup-orphaned" {
+		if len(instancesReadyForOrphanDetection) == 0 && alert.Type == "backup-orphaned" {
 			continue
 		}
 		m.clearAlertNoLock(alertID)

@@ -33,6 +33,8 @@ type StateSnapshot struct {
 	TemperatureMonitoringEnabled bool                       `json:"temperatureMonitoringEnabled"`
 	PVETagColors                 map[string]string          `json:"pveTagColors,omitempty"`
 	// TemplateVMIDs holds Proxmox template VMID→node mappings per instance.
+	// The presence of an instance key also indicates that template inventory was
+	// successfully populated for that instance, even when the inner map is empty.
 	// Not serialised to JSON or the frontend API; used only for backup orphan detection.
 	TemplateVMIDs map[string]map[int]string `json:"-"`
 }
