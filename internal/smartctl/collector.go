@@ -464,6 +464,7 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 
 	attempts := smartctlProbeAttempts(device)
 	var firstParsed *DiskSMART
+	var firstStandby *DiskSMART
 	var lastErr error
 
 	for i, args := range attempts {
@@ -473,11 +474,18 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				if exitErr.ExitCode() == smartctlStandbyExitStatus && len(output) == 0 {
-					return &DiskSMART{
+					standbyResult := &DiskSMART{
 						Device:      filepath.Base(device),
 						Standby:     true,
 						LastUpdated: timeNow(),
-					}, nil
+					}
+					if runtimeGOOS == "freebsd" && i < len(attempts)-1 {
+						if firstStandby == nil {
+							firstStandby = standbyResult
+						}
+						continue
+					}
+					return standbyResult, nil
 				}
 				if len(output) == 0 {
 					lastErr = err
@@ -516,6 +524,12 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 			Str("health", firstParsed.Health).
 			Msg("Collected SMART data")
 		return firstParsed, nil
+	}
+	if firstStandby != nil {
+		log.Debug().
+			Str("device", firstStandby.Device).
+			Msg("Collected SMART standby data")
+		return firstStandby, nil
 	}
 	if lastErr != nil {
 		if errors.Is(lastErr, errSMARTDataUnavailable) {
@@ -571,9 +585,6 @@ func freeBSDSmartctlDeviceTypes(device string) []string {
 
 func shouldRetryFreeBSDSMART(device string, result *DiskSMART, attemptIndex, attemptCount int) bool {
 	if runtimeGOOS != "freebsd" || attemptIndex >= attemptCount-1 || result == nil {
-		return false
-	}
-	if result.Standby {
 		return false
 	}
 	if result.Temperature > 0 {
