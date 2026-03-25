@@ -3098,6 +3098,18 @@ start_pulse() {
     
     if ! safe_systemctl start $SERVICE_NAME; then
         print_info "Note: systemctl start failed (common in unprivileged containers)"
+        sleep 3
+        if timeout 5 systemctl is-active --quiet $SERVICE_NAME 2>/dev/null; then
+            print_success "Pulse started successfully"
+            STOPPED_PULSE_SERVICE=""
+            return 0
+        fi
+
+        if [[ -n "$STOPPED_PULSE_SERVICE" ]]; then
+            print_error "Pulse was running before the update but did not come back up"
+            return 1
+        fi
+
         print_info "The service will start automatically when the container starts"
         STOPPED_PULSE_SERVICE=""
         return 0

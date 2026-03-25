@@ -150,6 +150,22 @@ restart_service_if_needed() {
     fi
 }
 
+wait_for_service_active() {
+    local service_name=$1
+    local timeout_seconds="${2:-20}"
+    local elapsed=0
+
+    while (( elapsed < timeout_seconds )); do
+        if systemctl is-active --quiet "$service_name" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        ((elapsed += 1))
+    done
+
+    return 1
+}
+
 # Perform the update
 perform_update() {
     local new_version=$1
@@ -205,6 +221,33 @@ perform_update() {
         local installed_version=$(get_current_version)
         if [[ "$installed_version" == "$new_version" ]]; then
             log info "Version verified: $installed_version"
+
+            if [[ "$service_was_active" == "true" ]]; then
+                if ! wait_for_service_active "$service_name" 20; then
+                    log warn "Pulse service is not active after update, attempting one explicit start"
+                    systemctl start "$service_name" || true
+                fi
+
+                if ! wait_for_service_active "$service_name" 20; then
+                    log error "Pulse service did not come back up after update"
+
+                    log info "Restoring from backup"
+                    if [[ -f "$backup_dir/pulse" ]]; then
+                        if [[ -f "$INSTALL_DIR/bin/pulse" ]]; then
+                            cp -f "$backup_dir/pulse" "$INSTALL_DIR/bin/pulse"
+                        else
+                            cp -f "$backup_dir/pulse" "$INSTALL_DIR/pulse"
+                        fi
+                    fi
+                    if [[ -f "$backup_dir/VERSION" ]]; then
+                        cp -f "$backup_dir/VERSION" "$INSTALL_DIR/VERSION"
+                    fi
+
+                    restart_service_if_needed "$service_name" "$service_was_active"
+                    rm -rf "$backup_dir"
+                    return 1
+                fi
+            fi
             
             # Clean up backup
             rm -rf "$backup_dir"
@@ -318,4 +361,6 @@ main() {
 }
 
 # Run main function
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
