@@ -111,18 +111,9 @@ func (h *ResourceHandlers) HandleGetResources(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Get the tenant-specific store
 	orgID := GetOrgID(r.Context())
+	h.populateStoreFromCurrentState(orgID)
 	store := h.getStoreForTenant(orgID)
-
-	// Populate from current state if we have a state provider
-	// This ensures fresh data even if the store hasn't been populated yet
-	if h.tenantStateProvider != nil && orgID != "" && orgID != "default" {
-		// Use tenant-aware state provider
-		h.PopulateFromSnapshotForTenant(orgID, h.tenantStateProvider.GetStateForTenant(orgID))
-	} else if h.stateProvider != nil {
-		h.PopulateFromSnapshot(h.stateProvider.GetState())
-	}
 
 	query := store.Query()
 
@@ -188,8 +179,8 @@ func (h *ResourceHandlers) HandleGetResource(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Get the tenant-specific store
 	orgID := GetOrgID(r.Context())
+	h.populateStoreFromCurrentState(orgID)
 	store := h.getStoreForTenant(orgID)
 
 	// Extract ID from path: /api/resources/{id}
@@ -217,14 +208,24 @@ func (h *ResourceHandlers) HandleGetResourceStats(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Get the tenant-specific store
 	orgID := GetOrgID(r.Context())
+	h.populateStoreFromCurrentState(orgID)
 	store := h.getStoreForTenant(orgID)
 
 	stats := store.GetStats()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (h *ResourceHandlers) populateStoreFromCurrentState(orgID string) {
+	if h.tenantStateProvider != nil && orgID != "" && orgID != "default" {
+		h.PopulateFromSnapshotForTenant(orgID, h.tenantStateProvider.GetStateForTenant(orgID))
+		return
+	}
+	if h.stateProvider != nil {
+		h.PopulateFromSnapshot(h.stateProvider.GetState())
+	}
 }
 
 // ResourcesResponse is the response for /api/resources.
@@ -237,106 +238,12 @@ type ResourcesResponse struct {
 // PopulateFromState converts all resources from a StateSnapshot to the unified store.
 // This should be called whenever the state is updated.
 func (h *ResourceHandlers) PopulateFromSnapshot(snapshot models.StateSnapshot) {
-	// Convert nodes
-	for _, node := range snapshot.Nodes {
-		r := resources.FromNode(node)
-		h.store.Upsert(r)
-	}
-
-	// Convert VMs
-	for _, vm := range snapshot.VMs {
-		r := resources.FromVM(vm)
-		h.store.Upsert(r)
-	}
-
-	// Convert containers
-	for _, ct := range snapshot.Containers {
-		r := resources.FromContainer(ct)
-		h.store.Upsert(r)
-	}
-
-	// Convert hosts
-	for _, host := range snapshot.Hosts {
-		r := resources.FromHost(host)
-		h.store.Upsert(r)
-	}
-
-	// Convert docker hosts and their containers
-	for _, dh := range snapshot.DockerHosts {
-		r := resources.FromDockerHost(dh)
-		h.store.Upsert(r)
-
-		// Convert containers within the docker host
-		for _, dc := range dh.Containers {
-			r := resources.FromDockerContainer(dc, dh.ID, dh.Hostname)
-			h.store.Upsert(r)
-		}
-	}
-
-	// Convert PBS instances
-	for _, pbs := range snapshot.PBSInstances {
-		r := resources.FromPBSInstance(pbs)
-		h.store.Upsert(r)
-	}
-
-	// Convert storage
-	for _, storage := range snapshot.Storage {
-		r := resources.FromStorage(storage)
-		h.store.Upsert(r)
-	}
+	h.store.PopulateFromSnapshot(snapshot)
 }
 
 // PopulateFromSnapshotForTenant converts all resources from a StateSnapshot to a tenant-specific store.
 func (h *ResourceHandlers) PopulateFromSnapshotForTenant(orgID string, snapshot models.StateSnapshot) {
-	store := h.getStoreForTenant(orgID)
-
-	// Convert nodes
-	for _, node := range snapshot.Nodes {
-		r := resources.FromNode(node)
-		store.Upsert(r)
-	}
-
-	// Convert VMs
-	for _, vm := range snapshot.VMs {
-		r := resources.FromVM(vm)
-		store.Upsert(r)
-	}
-
-	// Convert containers
-	for _, ct := range snapshot.Containers {
-		r := resources.FromContainer(ct)
-		store.Upsert(r)
-	}
-
-	// Convert hosts
-	for _, host := range snapshot.Hosts {
-		r := resources.FromHost(host)
-		store.Upsert(r)
-	}
-
-	// Convert docker hosts and their containers
-	for _, dh := range snapshot.DockerHosts {
-		r := resources.FromDockerHost(dh)
-		store.Upsert(r)
-
-		// Convert containers within the docker host
-		for _, dc := range dh.Containers {
-			r := resources.FromDockerContainer(dc, dh.ID, dh.Hostname)
-			store.Upsert(r)
-		}
-	}
-
-	// Convert PBS instances
-	for _, pbs := range snapshot.PBSInstances {
-		r := resources.FromPBSInstance(pbs)
-		store.Upsert(r)
-	}
-
-	// Convert storage
-	for _, storage := range snapshot.Storage {
-		r := resources.FromStorage(storage)
-		store.Upsert(r)
-	}
+	h.getStoreForTenant(orgID).PopulateFromSnapshot(snapshot)
 }
 
 // Helper functions for parsing query parameters

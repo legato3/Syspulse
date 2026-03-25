@@ -1277,4 +1277,97 @@ func (s *Store) PopulateFromSnapshot(snapshot models.StateSnapshot) {
 			delete(s.resources, id)
 		}
 	}
+
+	// Rebuild alert attachments from the current snapshot.
+	for _, resource := range s.resources {
+		resource.Alerts = nil
+	}
+
+	for _, alert := range snapshot.ActiveAlerts {
+		resourceID := s.resolveAlertResourceIDLocked(alert.ResourceID)
+		if resourceID == "" {
+			continue
+		}
+
+		resource, ok := s.resources[resourceID]
+		if !ok {
+			continue
+		}
+
+		resource.Alerts = append(resource.Alerts, ResourceAlert{
+			ID:        alert.ID,
+			Type:      alert.Type,
+			Level:     alert.Level,
+			Message:   alert.Message,
+			Value:     alert.Value,
+			Threshold: alert.Threshold,
+			StartTime: alert.StartTime,
+		})
+	}
+}
+
+func (s *Store) resolveAlertResourceIDLocked(resourceID string) string {
+	for _, candidate := range alertResourceCandidates(resourceID) {
+		if candidate == "" {
+			continue
+		}
+		if preferredID, ok := s.mergedFrom[candidate]; ok {
+			candidate = preferredID
+		}
+		if _, ok := s.resources[candidate]; ok {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func alertResourceCandidates(resourceID string) []string {
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceID == "" {
+		return nil
+	}
+
+	candidates := []string{resourceID}
+
+	if strings.HasPrefix(resourceID, "host:") {
+		candidates = append(candidates, strings.TrimPrefix(resourceID, "host:"))
+	}
+	if strings.HasPrefix(resourceID, "docker:") {
+		candidates = append(candidates, strings.TrimPrefix(resourceID, "docker:"))
+	}
+
+	for _, marker := range []string{"/disk:", "/disk_temp:", "/service/"} {
+		if idx := strings.Index(resourceID, marker); idx > 0 {
+			base := resourceID[:idx]
+			candidates = append(candidates, base)
+			if strings.HasPrefix(base, "host:") {
+				candidates = append(candidates, strings.TrimPrefix(base, "host:"))
+			}
+			if strings.HasPrefix(base, "docker:") {
+				candidates = append(candidates, strings.TrimPrefix(base, "docker:"))
+			}
+		}
+	}
+
+	if idx := strings.Index(resourceID, "-disk-"); idx > 0 {
+		candidates = append(candidates, resourceID[:idx])
+	}
+
+	return uniqueStrings(candidates)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

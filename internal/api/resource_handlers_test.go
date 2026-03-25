@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/rcourtman/pulse-go-rewrite/internal/models"
 	"github.com/rcourtman/pulse-go-rewrite/internal/resources"
 	"github.com/stretchr/testify/assert"
 )
@@ -76,7 +78,25 @@ func TestHandleGetResources(t *testing.T) {
 
 func TestHandleGetResourceStats(t *testing.T) {
 	handlers := NewResourceHandlers()
-	handlers.Store().Upsert(resources.Resource{ID: "1", Type: resources.ResourceTypeVM})
+	now := time.Now()
+	handlers.SetStateProvider(stubResourceStateProvider{
+		snapshot: models.StateSnapshot{
+			VMs: []models.VM{{
+				ID:       "vm-1",
+				Name:     "vm-1",
+				Status:   "running",
+				LastSeen: now,
+			}},
+			ActiveAlerts: []models.Alert{{
+				ID:         "vm-1-cpu",
+				ResourceID: "vm-1",
+				Type:       "cpu",
+				Level:      "warning",
+				Message:    "CPU high",
+				StartTime:  now,
+			}},
+		},
+	})
 
 	req := httptest.NewRequest("GET", "/api/resources/stats", nil)
 	w := httptest.NewRecorder()
@@ -86,4 +106,5 @@ func TestHandleGetResourceStats(t *testing.T) {
 	var stats resources.StoreStats
 	json.NewDecoder(w.Body).Decode(&stats)
 	assert.Equal(t, 1, stats.TotalResources)
+	assert.Equal(t, 1, stats.WithAlerts)
 }

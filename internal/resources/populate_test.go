@@ -9,6 +9,7 @@ import (
 
 func TestStorePopulateFromSnapshot(t *testing.T) {
 	store := NewStore()
+	now := time.Now()
 
 	// Create a minimal snapshot with test data
 	snapshot := models.StateSnapshot{
@@ -26,7 +27,7 @@ func TestStorePopulateFromSnapshot(t *testing.T) {
 					Usage: 50.0,
 				},
 				Uptime:   86400,
-				LastSeen: time.Now(),
+				LastSeen: now,
 			},
 		},
 		VMs: []models.VM{
@@ -61,6 +62,72 @@ func TestStorePopulateFromSnapshot(t *testing.T) {
 				ID:       "host-1",
 				Hostname: "my-host",
 				Status:   "online",
+			},
+		},
+		DockerHosts: []models.DockerHost{
+			{
+				ID:       "docker-host-1",
+				Hostname: "docker-host-1",
+				Status:   "online",
+				Containers: []models.DockerContainer{
+					{
+						ID:    "container-1",
+						Name:  "web",
+						State: "running",
+					},
+				},
+			},
+		},
+		ActiveAlerts: []models.Alert{
+			{
+				ID:         "vm-100-cpu",
+				ResourceID: "vm-100",
+				Type:       "cpu",
+				Level:      "warning",
+				Message:    "VM CPU high",
+				Value:      92,
+				Threshold:  80,
+				StartTime:  now,
+			},
+			{
+				ID:         "host-1-cpu",
+				ResourceID: "host:host-1",
+				Type:       "cpu",
+				Level:      "warning",
+				Message:    "Host CPU high",
+				Value:      95,
+				Threshold:  80,
+				StartTime:  now,
+			},
+			{
+				ID:         "host-1-disk",
+				ResourceID: "host:host-1/disk:root",
+				Type:       "disk",
+				Level:      "critical",
+				Message:    "Host disk high",
+				Value:      98,
+				Threshold:  90,
+				StartTime:  now,
+			},
+			{
+				ID:         "docker-container-state",
+				ResourceID: "docker:docker-host-1/container-1",
+				Type:       "state",
+				Level:      "critical",
+				Message:    "Container stopped",
+				Value:      0,
+				Threshold:  1,
+				StartTime:  now,
+			},
+			{
+				ID:         "docker-host-offline",
+				ResourceID: "docker:docker-host-1",
+				Type:       "offline",
+				Level:      "critical",
+				Message:    "Docker host offline",
+				Value:      0,
+				Threshold:  1,
+				StartTime:  now,
 			},
 		},
 	}
@@ -103,11 +170,33 @@ func TestStorePopulateFromSnapshot(t *testing.T) {
 		t.Errorf("Expected 1 host, got %d", len(hosts))
 	} else {
 		t.Logf("Host: id=%s, hostname=%s", hosts[0].ID, hosts[0].Identity.Hostname)
+		if len(hosts[0].Alerts) != 2 {
+			t.Errorf("expected host alerts to include host and disk alerts, got %d", len(hosts[0].Alerts))
+		}
+	}
+
+	dockerHosts := store.Query().OfType(ResourceTypeDockerHost).Execute()
+	if len(dockerHosts) != 1 {
+		t.Errorf("Expected 1 docker host, got %d", len(dockerHosts))
+	} else if len(dockerHosts[0].Alerts) != 1 {
+		t.Errorf("expected docker host alert to attach, got %d", len(dockerHosts[0].Alerts))
+	}
+
+	dockerContainers := store.Query().OfType(ResourceTypeDockerContainer).Execute()
+	if len(dockerContainers) != 1 {
+		t.Errorf("Expected 1 docker container, got %d", len(dockerContainers))
+	} else if len(dockerContainers[0].Alerts) != 1 {
+		t.Errorf("expected docker container alert to attach, got %d", len(dockerContainers[0].Alerts))
+	}
+
+	stats := store.GetStats()
+	if stats.WithAlerts != 4 {
+		t.Errorf("expected 4 resources with alerts, got %d", stats.WithAlerts)
 	}
 
 	// Test summary
 	t.Logf("SUCCESS: PopulateFromSnapshot works correctly!")
-	t.Logf("Total resources: %d (1 node + 1 VM + 1 container + 1 host)", len(all))
+	t.Logf("Total resources: %d", len(all))
 }
 
 // TestPopulateFromSnapshotRemovesStaleResources verifies that resources not present
