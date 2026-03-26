@@ -819,6 +819,90 @@ func TestFetchGuestAgentMetadataPreservesCachedValuesOnEmptyResponses(t *testing
 	}
 }
 
+func TestFetchGuestAgentMetadataPreservesFreshCacheWhenAgentTemporarilyUnavailable(t *testing.T) {
+	t.Parallel()
+
+	key := guestMetadataCacheKey("pve", "node1", 100)
+	cachedFetchedAt := time.Now().Add(-time.Minute)
+
+	newMonitor := func() *Monitor {
+		return &Monitor{
+			guestMetadataCache: map[string]guestMetadataCacheEntry{
+				key: {
+					ipAddresses: []string{"192.168.1.10"},
+					networkInterfaces: []models.GuestNetworkInterface{
+						{Name: "eth0", MAC: "00:11:22:33:44:55", Addresses: []string{"192.168.1.10"}},
+					},
+					osName:       "Ubuntu",
+					osVersion:    "24.04",
+					agentVersion: "8.2.0",
+					fetchedAt:    cachedFetchedAt,
+				},
+			},
+			guestMetadataLimiter: make(map[string]time.Time),
+		}
+	}
+
+	assertCachePreserved := func(t *testing.T, monitor *Monitor, gotIPs []string, gotIfaces []models.GuestNetworkInterface, gotOSName, gotOSVersion, gotAgentVersion string) {
+		t.Helper()
+
+		if len(gotIPs) != 1 || gotIPs[0] != "192.168.1.10" {
+			t.Fatalf("expected cached IPs to be preserved, got %#v", gotIPs)
+		}
+		if len(gotIfaces) != 1 || gotIfaces[0].Name != "eth0" {
+			t.Fatalf("expected cached interfaces to be preserved, got %#v", gotIfaces)
+		}
+		if gotOSName != "Ubuntu" || gotOSVersion != "24.04" {
+			t.Fatalf("expected cached OS info to be preserved, got %q %q", gotOSName, gotOSVersion)
+		}
+		if gotAgentVersion != "8.2.0" {
+			t.Fatalf("expected cached agent version to be preserved, got %q", gotAgentVersion)
+		}
+
+		entry, ok := monitor.guestMetadataCache[key]
+		if !ok {
+			t.Fatal("expected guest metadata cache entry to remain populated")
+		}
+		if len(entry.networkInterfaces) != 1 || entry.networkInterfaces[0].Name != "eth0" {
+			t.Fatalf("expected cached interfaces to remain populated, got %#v", entry.networkInterfaces)
+		}
+	}
+
+	t.Run("nil vm status keeps fresh cache", func(t *testing.T) {
+		t.Parallel()
+
+		monitor := newMonitor()
+		gotIPs, gotIfaces, gotOSName, gotOSVersion, gotAgentVersion := monitor.fetchGuestAgentMetadata(
+			context.Background(),
+			&emptyGuestMetadataClient{},
+			"pve",
+			"node1",
+			"vm100",
+			100,
+			nil,
+		)
+
+		assertCachePreserved(t, monitor, gotIPs, gotIfaces, gotOSName, gotOSVersion, gotAgentVersion)
+	})
+
+	t.Run("agent temporarily unavailable keeps fresh cache", func(t *testing.T) {
+		t.Parallel()
+
+		monitor := newMonitor()
+		gotIPs, gotIfaces, gotOSName, gotOSVersion, gotAgentVersion := monitor.fetchGuestAgentMetadata(
+			context.Background(),
+			&emptyGuestMetadataClient{},
+			"pve",
+			"node1",
+			"vm100",
+			100,
+			&proxmox.VMStatus{Agent: proxmox.VMAgentField{Value: 0}},
+		)
+
+		assertCachePreserved(t, monitor, gotIPs, gotIfaces, gotOSName, gotOSVersion, gotAgentVersion)
+	})
+}
+
 func TestGuestMetadataCacheEntryTTL(t *testing.T) {
 	t.Parallel()
 
@@ -828,9 +912,9 @@ func TestGuestMetadataCacheEntryTTL(t *testing.T) {
 		want  time.Duration
 	}{
 		{
-			name: "empty entry retries quickly",
+			name:  "empty entry retries quickly",
 			entry: guestMetadataCacheEntry{},
-			want: guestMetadataEmptyTTL,
+			want:  guestMetadataEmptyTTL,
 		},
 		{
 			name: "network metadata uses full ttl",
