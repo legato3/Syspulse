@@ -1424,6 +1424,7 @@ const (
 	vmAgentMemCacheTTL               = 60 * time.Second // Cache guest-agent /proc/meminfo reads
 	vmAgentMemRequestTimeout         = 3 * time.Second  // Timeout for guest-agent file-read calls
 	vmAgentMemNegativeTTL            = 5 * time.Minute  // Backoff for VMs where guest-agent read fails
+	vmAgentMemNegativeKnownGuestTTL  = 30 * time.Second // Retry sooner for guests we know are non-Windows
 )
 
 type taskOutcome struct {
@@ -1621,7 +1622,7 @@ func (m *Monitor) getVMAgentMemAvailable(ctx context.Context, client PVEClientIn
 	if entry, ok := m.vmAgentMemCache[cacheKey]; ok {
 		ttl := vmAgentMemCacheTTL
 		if entry.negative {
-			ttl = vmAgentMemNegativeTTL
+			ttl = m.vmAgentMemNegativeCacheTTL(instance, node, vmid)
 		}
 		if now.Sub(entry.fetchedAt) < ttl {
 			m.rrdCacheMu.RUnlock()
@@ -1650,6 +1651,30 @@ func (m *Monitor) getVMAgentMemAvailable(ctx context.Context, client PVEClientIn
 	m.rrdCacheMu.Unlock()
 
 	return available, nil
+}
+
+func (m *Monitor) vmAgentMemNegativeCacheTTL(instance, node string, vmid int) time.Duration {
+	if m == nil {
+		return vmAgentMemNegativeTTL
+	}
+
+	key := guestMetadataCacheKey(instance, node, vmid)
+	m.guestMetadataMu.RLock()
+	entry, ok := m.guestMetadataCache[key]
+	m.guestMetadataMu.RUnlock()
+	if !ok {
+		return vmAgentMemNegativeTTL
+	}
+
+	osName := strings.ToLower(strings.TrimSpace(entry.osName))
+	osVersion := strings.ToLower(strings.TrimSpace(entry.osVersion))
+	if osName == "" && osVersion == "" {
+		return vmAgentMemNegativeTTL
+	}
+	if strings.Contains(osName, "windows") || strings.Contains(osVersion, "windows") {
+		return vmAgentMemNegativeTTL
+	}
+	return vmAgentMemNegativeKnownGuestTTL
 }
 
 // RemoveDockerHost removes a docker host from the shared state and clears related alerts.

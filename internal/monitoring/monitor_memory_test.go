@@ -19,6 +19,9 @@ type stubPVEClient struct {
 	nodeStatus *proxmox.NodeStatus
 	rrdPoints  []proxmox.NodeRRDPoint
 	rrdErr     error // if set, GetNodeRRDData returns this error
+	vmMemAvail uint64
+	vmMemErr   error
+	vmMemCalls int
 }
 
 var _ PVEClientInterface = (*stubPVEClient)(nil)
@@ -122,7 +125,11 @@ func (s *stubPVEClient) GetVMAgentVersion(ctx context.Context, node string, vmid
 }
 
 func (s *stubPVEClient) GetVMMemAvailableFromAgent(ctx context.Context, node string, vmid int) (uint64, error) {
-	return 0, fmt.Errorf("not implemented")
+	s.vmMemCalls++
+	if s.vmMemErr != nil {
+		return 0, s.vmMemErr
+	}
+	return s.vmMemAvail, nil
 }
 
 func (s *stubPVEClient) GetZFSPoolStatus(ctx context.Context, node string) ([]proxmox.ZFSPoolStatus, error) {
@@ -248,6 +255,68 @@ func TestPollPVEInstanceUsesRRDMemUsedFallback(t *testing.T) {
 	}
 	if snap.Raw.RRDUsed != actualUsed {
 		t.Fatalf("expected snapshot RRD used %d, got %d", actualUsed, snap.Raw.RRDUsed)
+	}
+}
+
+func TestGetVMAgentMemAvailableRetriesKnownNonWindowsGuestSoonerAfterNegativeCache(t *testing.T) {
+	t.Parallel()
+
+	client := &stubPVEClient{vmMemAvail: 2 << 30}
+	monitor := &Monitor{
+		guestMetadataCache: map[string]guestMetadataCacheEntry{
+			guestMetadataCacheKey("pve1", "node1", 100): {
+				osName:    "Ubuntu",
+				fetchedAt: time.Now(),
+			},
+		},
+		vmAgentMemCache: map[string]agentMemCacheEntry{
+			"pve1/node1/100": {
+				negative:  true,
+				fetchedAt: time.Now().Add(-vmAgentMemNegativeKnownGuestTTL - time.Second),
+			},
+		},
+	}
+
+	available, err := monitor.getVMAgentMemAvailable(context.Background(), client, "pve1", "node1", 100)
+	if err != nil {
+		t.Fatalf("getVMAgentMemAvailable() error = %v", err)
+	}
+	if available != 2<<30 {
+		t.Fatalf("getVMAgentMemAvailable() available = %d, want %d", available, uint64(2<<30))
+	}
+	if client.vmMemCalls != 1 {
+		t.Fatalf("expected guest-agent meminfo retry, got %d calls", client.vmMemCalls)
+	}
+}
+
+func TestGetVMAgentMemAvailableKeepsLongNegativeCacheForWindowsGuest(t *testing.T) {
+	t.Parallel()
+
+	client := &stubPVEClient{vmMemAvail: 2 << 30}
+	monitor := &Monitor{
+		guestMetadataCache: map[string]guestMetadataCacheEntry{
+			guestMetadataCacheKey("pve1", "node1", 100): {
+				osName:    "Microsoft Windows",
+				fetchedAt: time.Now(),
+			},
+		},
+		vmAgentMemCache: map[string]agentMemCacheEntry{
+			"pve1/node1/100": {
+				negative:  true,
+				fetchedAt: time.Now().Add(-vmAgentMemNegativeKnownGuestTTL - time.Second),
+			},
+		},
+	}
+
+	available, err := monitor.getVMAgentMemAvailable(context.Background(), client, "pve1", "node1", 100)
+	if err == nil {
+		t.Fatal("expected cached negative result for Windows guest")
+	}
+	if available != 0 {
+		t.Fatalf("expected no memavailable result, got %d", available)
+	}
+	if client.vmMemCalls != 0 {
+		t.Fatalf("expected Windows guest negative cache to suppress retry, got %d calls", client.vmMemCalls)
 	}
 }
 
