@@ -26,6 +26,12 @@ type repeatedLowTrustMemoryClusterClient struct {
 	vmStatuses map[int]*proxmox.VMStatus
 }
 
+type rotatingGuestAgentClusterClient struct {
+	stubPVEClient
+	resources []proxmox.ClusterResource
+	fsDelay   time.Duration
+}
+
 func (c *slowGuestAgentClusterClient) GetClusterResources(ctx context.Context, resourceType string) ([]proxmox.ClusterResource, error) {
 	return c.resources, nil
 }
@@ -80,6 +86,46 @@ func (c *repeatedLowTrustMemoryClusterClient) GetVMStatus(ctx context.Context, n
 	return nil, nil
 }
 
+func (c *rotatingGuestAgentClusterClient) GetClusterResources(ctx context.Context, resourceType string) ([]proxmox.ClusterResource, error) {
+	return c.resources, nil
+}
+
+func (c *rotatingGuestAgentClusterClient) GetVMStatus(ctx context.Context, node string, vmid int) (*proxmox.VMStatus, error) {
+	return &proxmox.VMStatus{
+		MaxMem: 8 * 1024,
+		Mem:    4 * 1024,
+		Agent:  proxmox.VMAgentField{Value: 1},
+	}, nil
+}
+
+func (c *rotatingGuestAgentClusterClient) GetVMFSInfo(ctx context.Context, node string, vmid int) ([]proxmox.VMFileSystem, error) {
+	select {
+	case <-time.After(c.fsDelay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	return []proxmox.VMFileSystem{{
+		Mountpoint: "/",
+		Type:       "ext4",
+		TotalBytes: 100 * 1024 * 1024 * 1024,
+		UsedBytes:  40 * 1024 * 1024 * 1024,
+		Disk:       "/dev/vda",
+	}}, nil
+}
+
+func (c *rotatingGuestAgentClusterClient) GetVMNetworkInterfaces(ctx context.Context, node string, vmid int) ([]proxmox.VMNetworkInterface, error) {
+	return nil, nil
+}
+
+func (c *rotatingGuestAgentClusterClient) GetVMAgentInfo(ctx context.Context, node string, vmid int) (map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (c *rotatingGuestAgentClusterClient) GetVMAgentVersion(ctx context.Context, node string, vmid int) (string, error) {
+	return "", nil
+}
+
 func TestGuestAgentFSInfoBudgetHonorsConfiguredTimeouts(t *testing.T) {
 	t.Parallel()
 
@@ -91,6 +137,25 @@ func TestGuestAgentFSInfoBudgetHonorsConfiguredTimeouts(t *testing.T) {
 	budget := m.guestAgentFSInfoBudget()
 	if budget < 30*time.Second {
 		t.Fatalf("guestAgentFSInfoBudget() = %s, want at least 30s", budget)
+	}
+}
+
+func TestRotateIndexedClusterResources(t *testing.T) {
+	t.Parallel()
+
+	original := []indexedClusterResource{
+		{order: 0, resource: proxmox.ClusterResource{VMID: 100}},
+		{order: 1, resource: proxmox.ClusterResource{VMID: 101}},
+		{order: 2, resource: proxmox.ClusterResource{VMID: 102}},
+	}
+
+	rotated := rotateIndexedClusterResources(original, 1)
+	if got := []int{rotated[0].resource.VMID, rotated[1].resource.VMID, rotated[2].resource.VMID}; got[0] != 101 || got[1] != 102 || got[2] != 100 {
+		t.Fatalf("rotateIndexedClusterResources(..., 1) VMIDs = %v, want [101 102 100]", got)
+	}
+
+	if original[0].resource.VMID != 100 || original[1].resource.VMID != 101 || original[2].resource.VMID != 102 {
+		t.Fatal("rotateIndexedClusterResources should not mutate the original slice")
 	}
 }
 
@@ -138,6 +203,61 @@ func TestPollVMsAndContainersEfficientCompletesDiskQueriesWithinPollBudget(t *te
 		if vm.Disk.Total <= 0 || vm.Disk.Usage <= 0 {
 			t.Fatalf("expected guest-agent disk data for %s, got total=%d usage=%.2f", vm.Name, vm.Disk.Total, vm.Disk.Usage)
 		}
+	}
+}
+
+func TestPollVMsAndContainersEfficientRotatesGuestAgentPriorityAcrossPolls(t *testing.T) {
+	t.Setenv("PULSE_DATA_DIR", t.TempDir())
+
+	client := &rotatingGuestAgentClusterClient{
+		fsDelay: 60 * time.Millisecond,
+		resources: []proxmox.ClusterResource{
+			{Type: "qemu", Node: "node1", VMID: 100, Name: "vm100", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024, MaxDisk: 100 * 1024 * 1024 * 1024, MaxCPU: 4},
+			{Type: "qemu", Node: "node1", VMID: 101, Name: "vm101", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024, MaxDisk: 100 * 1024 * 1024 * 1024, MaxCPU: 4},
+			{Type: "qemu", Node: "node1", VMID: 102, Name: "vm102", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024, MaxDisk: 100 * 1024 * 1024 * 1024, MaxCPU: 4},
+		},
+	}
+
+	mon := newTestPVEMonitor("pve1")
+	defer mon.alertManager.Stop()
+	defer mon.notificationMgr.Stop()
+
+	mon.rateTracker = NewRateTracker()
+	mon.guestMetadataCache = make(map[string]guestMetadataCacheEntry)
+	mon.guestMetadataLimiter = make(map[string]time.Time)
+	mon.vmRRDMemCache = make(map[string]rrdMemCacheEntry)
+	mon.vmAgentMemCache = make(map[string]agentMemCacheEntry)
+	mon.guestAgentWorkSlots = make(chan struct{}, 1)
+	mon.guestAgentFSInfoTimeout = 250 * time.Millisecond
+	mon.guestAgentNetworkTimeout = 250 * time.Millisecond
+	mon.guestAgentOSInfoTimeout = 250 * time.Millisecond
+	mon.guestAgentVersionTimeout = 250 * time.Millisecond
+	mon.guestAgentRetries = 0
+
+	checkResolved := func(expectedVMID int) {
+		state := mon.state.GetSnapshot()
+		if len(state.VMs) != 3 {
+			t.Fatalf("expected 3 VMs, got %d", len(state.VMs))
+		}
+
+		vmByID := make(map[int]models.VM, len(state.VMs))
+		for _, vm := range state.VMs {
+			vmByID[vm.VMID] = vm
+		}
+
+		if vmByID[expectedVMID].Disk.Usage <= 0 {
+			t.Fatalf("expected VM %d to get a real disk reading, got usage=%.2f reason=%q", expectedVMID, vmByID[expectedVMID].Disk.Usage, vmByID[expectedVMID].DiskStatusReason)
+		}
+	}
+
+	for _, expectedVMID := range []int{100, 101, 102} {
+		ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+		if ok := mon.pollVMsAndContainersEfficient(ctx, "pve1", "", false, client, map[string]string{"node1": "online"}); !ok {
+			cancel()
+			t.Fatal("pollVMsAndContainersEfficient() returned false")
+		}
+		cancel()
+		checkResolved(expectedVMID)
 	}
 }
 

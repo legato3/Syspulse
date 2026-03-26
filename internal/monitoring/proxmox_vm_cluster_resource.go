@@ -27,6 +27,62 @@ type efficientQEMUPollResult struct {
 	ok       bool
 }
 
+func (m *Monitor) nextGuestAgentPollOffset(instanceName string, count int) int {
+	if m == nil || count <= 1 {
+		return 0
+	}
+
+	m.guestAgentPollOrderMu.Lock()
+	defer m.guestAgentPollOrderMu.Unlock()
+
+	if m.guestAgentPollCursor == nil {
+		m.guestAgentPollCursor = make(map[string]int)
+	}
+
+	offset := m.guestAgentPollCursor[instanceName] % count
+	m.guestAgentPollCursor[instanceName] = (offset + 1) % count
+
+	return offset
+}
+
+func rotateIndexedClusterResources(resources []indexedClusterResource, offset int) []indexedClusterResource {
+	count := len(resources)
+	if count <= 1 {
+		return append([]indexedClusterResource(nil), resources...)
+	}
+
+	offset %= count
+	if offset < 0 {
+		offset += count
+	}
+	if offset == 0 {
+		return append([]indexedClusterResource(nil), resources...)
+	}
+
+	rotated := make([]indexedClusterResource, 0, count)
+	rotated = append(rotated, resources[offset:]...)
+	rotated = append(rotated, resources[:offset]...)
+	return rotated
+}
+
+func (m *Monitor) efficientQEMUWorkerCount(total int) int {
+	if total <= 0 {
+		return 0
+	}
+	if m == nil || m.guestAgentWorkSlots == nil {
+		return total
+	}
+
+	workers := cap(m.guestAgentWorkSlots)
+	if workers <= 0 {
+		return total
+	}
+	if workers > total {
+		return total
+	}
+	return workers
+}
+
 func (m *Monitor) pollEfficientQEMUResource(
 	ctx context.Context,
 	instanceName string,

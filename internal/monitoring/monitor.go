@@ -975,6 +975,8 @@ type Monitor struct {
 	guestMetadataRetryBackoff  time.Duration
 	guestMetadataHoldDuration  time.Duration
 	guestAgentWorkSlots        chan struct{}
+	guestAgentPollOrderMu      sync.Mutex
+	guestAgentPollCursor       map[string]int
 	// Configurable guest agent timeouts (refs #592)
 	guestAgentFSInfoTimeout  time.Duration
 	guestAgentNetworkTimeout time.Duration
@@ -4484,6 +4486,7 @@ func New(cfg *config.Config) (*Monitor, error) {
 		dockerCommandIndex:         make(map[string]string),
 		guestMetadataCache:         make(map[string]guestMetadataCacheEntry),
 		guestMetadataLimiter:       make(map[string]time.Time),
+		guestAgentPollCursor:       make(map[string]int),
 		guestMetadataMinRefresh:    minRefresh,
 		guestMetadataRefreshJitter: jitter,
 		guestMetadataRetryBackoff:  retryBackoff,
@@ -8296,31 +8299,44 @@ func (m *Monitor) pollVMsAndContainersEfficient(ctx context.Context, instanceNam
 	}
 
 	if len(vmResources) > 0 {
+		scheduledVMResources := rotateIndexedClusterResources(
+			vmResources,
+			m.nextGuestAgentPollOffset(instanceName, len(vmResources)),
+		)
 		resultCh := make(chan efficientQEMUPollResult, len(vmResources))
+		jobCh := make(chan indexedClusterResource, len(vmResources))
 		var vmWG sync.WaitGroup
 
-		for _, entry := range vmResources {
+		workerCount := m.efficientQEMUWorkerCount(len(scheduledVMResources))
+		for i := 0; i < workerCount; i++ {
 			vmWG.Add(1)
-			go func(entry indexedClusterResource) {
+			go func() {
 				defer vmWG.Done()
-				vm, alertVM, snapshot, ok := m.pollEfficientQEMUResource(
-					ctx,
-					instanceName,
-					entry.resource,
-					client,
-					vmIDToHostAgent,
-					prevDiskByGuestID,
-					prevVMByGuestID,
-				)
-				resultCh <- efficientQEMUPollResult{
-					order:    entry.order,
-					vm:       vm,
-					alertVM:  alertVM,
-					snapshot: snapshot,
-					ok:       ok,
+				for entry := range jobCh {
+					vm, alertVM, snapshot, ok := m.pollEfficientQEMUResource(
+						ctx,
+						instanceName,
+						entry.resource,
+						client,
+						vmIDToHostAgent,
+						prevDiskByGuestID,
+						prevVMByGuestID,
+					)
+					resultCh <- efficientQEMUPollResult{
+						order:    entry.order,
+						vm:       vm,
+						alertVM:  alertVM,
+						snapshot: snapshot,
+						ok:       ok,
+					}
 				}
-			}(entry)
+			}()
 		}
+
+		for _, entry := range scheduledVMResources {
+			jobCh <- entry
+		}
+		close(jobCh)
 
 		go func() {
 			vmWG.Wait()
