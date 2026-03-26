@@ -18,6 +18,7 @@ import (
 
 const (
 	guestMetadataCacheTTL    = 5 * time.Minute
+	guestMetadataEmptyTTL    = 30 * time.Second
 	defaultGuestMetadataHold = 15 * time.Second
 
 	// Guest agent timeout defaults (configurable via environment variables)
@@ -45,6 +46,21 @@ type guestMetadataCacheEntry struct {
 	fetchedAt          time.Time
 	osInfoFailureCount int  // Track consecutive OS info failures
 	osInfoSkip         bool // Skip OS info calls after repeated failures (refs #692)
+}
+
+func guestMetadataCacheHasUsefulData(entry guestMetadataCacheEntry) bool {
+	return len(entry.ipAddresses) > 0 ||
+		len(entry.networkInterfaces) > 0 ||
+		entry.osName != "" ||
+		entry.osVersion != "" ||
+		entry.agentVersion != ""
+}
+
+func guestMetadataCacheEntryTTL(entry guestMetadataCacheEntry) time.Duration {
+	if guestMetadataCacheHasUsefulData(entry) {
+		return guestMetadataCacheTTL
+	}
+	return guestMetadataEmptyTTL
 }
 
 func cloneGuestDisks(src []models.Disk) []models.Disk {
@@ -87,6 +103,19 @@ func (m *Monitor) scheduleNextGuestMetadataFetch(key string, now time.Time) {
 	m.guestMetadataLimiterMu.Lock()
 	m.guestMetadataLimiter[key] = now.Add(interval)
 	m.guestMetadataLimiterMu.Unlock()
+}
+
+func (m *Monitor) scheduleGuestMetadataFetchForEntry(key string, now time.Time, entry guestMetadataCacheEntry) {
+	if m == nil {
+		return
+	}
+	if !guestMetadataCacheHasUsefulData(entry) {
+		m.guestMetadataLimiterMu.Lock()
+		m.guestMetadataLimiter[key] = now.Add(guestMetadataEmptyTTL)
+		m.guestMetadataLimiterMu.Unlock()
+		return
+	}
+	m.scheduleNextGuestMetadataFetch(key, now)
 }
 
 func (m *Monitor) deferGuestMetadataRetry(key string, now time.Time) {
@@ -314,11 +343,11 @@ func (m *Monitor) fetchGuestAgentMetadata(ctx context.Context, client PVEClientI
 	cached, ok := m.guestMetadataCache[key]
 	m.guestMetadataMu.RUnlock()
 
-	if ok && now.Sub(cached.fetchedAt) < guestMetadataCacheTTL {
+	if ok && now.Sub(cached.fetchedAt) < guestMetadataCacheEntryTTL(cached) {
 		return cloneStringSlice(cached.ipAddresses), cloneGuestNetworkInterfaces(cached.networkInterfaces), cached.osName, cached.osVersion, cached.agentVersion
 	}
 
-	needsFetch := !ok || now.Sub(cached.fetchedAt) >= guestMetadataCacheTTL
+	needsFetch := !ok || now.Sub(cached.fetchedAt) >= guestMetadataCacheEntryTTL(cached)
 	if !needsFetch {
 		return cloneStringSlice(cached.ipAddresses), cloneGuestNetworkInterfaces(cached.networkInterfaces), cached.osName, cached.osVersion, cached.agentVersion
 	}
@@ -344,9 +373,6 @@ func (m *Monitor) fetchGuestAgentMetadata(ctx context.Context, client PVEClientI
 			return ipAddresses, networkIfaces, osName, osVersion, agentVersion
 		}
 		defer m.releaseGuestMetadataSlot()
-		defer func() {
-			m.scheduleNextGuestMetadataFetch(key, time.Now())
-		}()
 	}
 
 	// Network interfaces with configurable timeout and retry (refs #592)
@@ -474,6 +500,9 @@ func (m *Monitor) fetchGuestAgentMetadata(ctx context.Context, client PVEClientI
 	}
 	m.guestMetadataCache[key] = entry
 	m.guestMetadataMu.Unlock()
+	if reserved {
+		m.scheduleGuestMetadataFetchForEntry(key, time.Now(), entry)
+	}
 
 	return ipAddresses, networkIfaces, osName, osVersion, agentVersion
 }
