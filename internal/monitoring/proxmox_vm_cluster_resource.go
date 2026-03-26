@@ -370,7 +370,7 @@ func (m *Monitor) pollEfficientQEMUResource(
 		}
 	}
 
-	if res.Status == "running" && detailedStatus != nil && detailedStatus.Agent.Value > 0 {
+	if res.Status == "running" {
 		m.runGuestAgentVMWork(ctx, instanceName, res.Node, res.Name, res.VMID, func(agentCtx context.Context) {
 			guestIPs, guestIfaces, guestOSName, guestOSVersion, guestAgentVersion := m.fetchGuestAgentMetadata(agentCtx, client, instanceName, res.Node, res.Name, res.VMID, detailedStatus)
 			if len(guestIPs) > 0 {

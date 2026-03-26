@@ -32,6 +32,11 @@ type rotatingGuestAgentClusterClient struct {
 	fsDelay   time.Duration
 }
 
+type transientStatusFailureClusterClient struct {
+	stubPVEClient
+	resources []proxmox.ClusterResource
+}
+
 func (c *slowGuestAgentClusterClient) GetClusterResources(ctx context.Context, resourceType string) ([]proxmox.ClusterResource, error) {
 	return c.resources, nil
 }
@@ -124,6 +129,14 @@ func (c *rotatingGuestAgentClusterClient) GetVMAgentInfo(ctx context.Context, no
 
 func (c *rotatingGuestAgentClusterClient) GetVMAgentVersion(ctx context.Context, node string, vmid int) (string, error) {
 	return "", nil
+}
+
+func (c *transientStatusFailureClusterClient) GetClusterResources(ctx context.Context, resourceType string) ([]proxmox.ClusterResource, error) {
+	return c.resources, nil
+}
+
+func (c *transientStatusFailureClusterClient) GetVMStatus(ctx context.Context, node string, vmid int) (*proxmox.VMStatus, error) {
+	return nil, context.DeadlineExceeded
 }
 
 func TestGuestAgentFSInfoBudgetHonorsConfiguredTimeouts(t *testing.T) {
@@ -258,6 +271,66 @@ func TestPollVMsAndContainersEfficientRotatesGuestAgentPriorityAcrossPolls(t *te
 		}
 		cancel()
 		checkResolved(expectedVMID)
+	}
+}
+
+func TestPollVMsAndContainersEfficientPreservesCachedGuestMetadataWhenStatusUnavailable(t *testing.T) {
+	t.Setenv("PULSE_DATA_DIR", t.TempDir())
+
+	client := &transientStatusFailureClusterClient{
+		resources: []proxmox.ClusterResource{
+			{Type: "qemu", Node: "node1", VMID: 100, Name: "vm100", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024, MaxDisk: 100 * 1024 * 1024 * 1024, MaxCPU: 4},
+		},
+	}
+
+	mon := newTestPVEMonitor("pve1")
+	defer mon.alertManager.Stop()
+	defer mon.notificationMgr.Stop()
+
+	mon.rateTracker = NewRateTracker()
+	mon.guestMetadataCache = map[string]guestMetadataCacheEntry{
+		guestMetadataCacheKey("pve1", "node1", 100): {
+			ipAddresses: []string{"192.168.1.50"},
+			networkInterfaces: []models.GuestNetworkInterface{
+				{Name: "Ethernet0", MAC: "00:11:22:33:44:55", Addresses: []string{"192.168.1.50"}},
+			},
+			osName:       "Windows",
+			osVersion:    "Server 2022",
+			agentVersion: "8.2.0",
+			fetchedAt:    time.Now(),
+		},
+	}
+	mon.guestMetadataLimiter = make(map[string]time.Time)
+	mon.vmRRDMemCache = make(map[string]rrdMemCacheEntry)
+	mon.vmAgentMemCache = make(map[string]agentMemCacheEntry)
+	mon.guestAgentFSInfoTimeout = 250 * time.Millisecond
+	mon.guestAgentNetworkTimeout = 250 * time.Millisecond
+	mon.guestAgentOSInfoTimeout = 250 * time.Millisecond
+	mon.guestAgentVersionTimeout = 250 * time.Millisecond
+	mon.guestAgentRetries = 0
+	mon.guestAgentWorkSlots = make(chan struct{}, 1)
+
+	if ok := mon.pollVMsAndContainersEfficient(context.Background(), "pve1", "", false, client, map[string]string{"node1": "online"}); !ok {
+		t.Fatal("pollVMsAndContainersEfficient() returned false")
+	}
+
+	state := mon.state.GetSnapshot()
+	if len(state.VMs) != 1 {
+		t.Fatalf("expected 1 VM, got %d", len(state.VMs))
+	}
+
+	vm := state.VMs[0]
+	if len(vm.IPAddresses) != 1 || vm.IPAddresses[0] != "192.168.1.50" {
+		t.Fatalf("expected cached IPs to be preserved, got %#v", vm.IPAddresses)
+	}
+	if len(vm.NetworkInterfaces) != 1 || vm.NetworkInterfaces[0].Name != "Ethernet0" {
+		t.Fatalf("expected cached interfaces to be preserved, got %#v", vm.NetworkInterfaces)
+	}
+	if vm.OSName != "Windows" || vm.OSVersion != "Server 2022" {
+		t.Fatalf("expected cached OS info to be preserved, got %q %q", vm.OSName, vm.OSVersion)
+	}
+	if vm.AgentVersion != "8.2.0" {
+		t.Fatalf("expected cached agent version to be preserved, got %q", vm.AgentVersion)
 	}
 }
 
