@@ -427,12 +427,13 @@ func (m *Monitor) pollEfficientQEMUResource(
 	case rrdUsed > 0:
 		memUsed = rrdUsed
 		memorySource = "rrd-memused"
-	case detailedStatus != nil && detailedStatus.Mem > 0:
-		memUsed = detailedStatus.Mem
-		memorySource = "status-mem"
-	case detailedStatus != nil && detailedStatus.FreeMem > 0 && memTotal >= detailedStatus.FreeMem:
-		memUsed = memTotal - detailedStatus.FreeMem
-		memorySource = "status-freemem"
+	case detailedStatus != nil:
+		if selection := selectVMLowTrustUsedMemory(memTotal, detailedStatus); selection.Source != "" {
+			memUsed = selection.Used
+			memorySource = selection.Source
+		} else {
+			memorySource = "status-unavailable"
+		}
 	}
 	if memUsed > memTotal {
 		memUsed = memTotal

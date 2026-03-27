@@ -522,16 +522,15 @@ func (m *Monitor) pollVMsWithNodes(ctx context.Context, instanceName string, clu
 				case rrdUsed > 0:
 					memUsed = rrdUsed
 					memorySource = "rrd-memused"
-				case vmStatus != nil && vmStatus.Mem > 0:
-					memUsed = vmStatus.Mem
-					memorySource = "status-mem"
-				case vmStatus != nil && vmStatus.FreeMem > 0 && memTotal >= vmStatus.FreeMem:
-					memUsed = memTotal - vmStatus.FreeMem
-					memorySource = "status-freemem"
+				case vmStatus != nil:
+					if selection := selectVMLowTrustUsedMemory(memTotal, vmStatus); selection.Source != "" {
+						memUsed = selection.Used
+						memorySource = selection.Source
+					} else {
+						memorySource = "status-unavailable"
+					}
 				case vmStatus == nil:
 					memorySource = "listing-mem"
-				default:
-					memorySource = "status-unavailable"
 				}
 				if memUsed > memTotal {
 					memUsed = memTotal

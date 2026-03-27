@@ -101,3 +101,64 @@ func TestSelectVMAvailableFromMemInfo(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectVMLowTrustUsedMemory(t *testing.T) {
+	giB := uint64(1024 * 1024 * 1024)
+
+	tests := []struct {
+		name       string
+		memTotal   uint64
+		status     *proxmox.VMStatus
+		wantUsed   uint64
+		wantSource string
+	}{
+		{
+			name:     "prefers status mem when it is plausible",
+			memTotal: 8 * giB,
+			status: &proxmox.VMStatus{
+				Mem:     3 * giB,
+				FreeMem: 5 * giB,
+			},
+			wantUsed:   3 * giB,
+			wantSource: "status-mem",
+		},
+		{
+			name:     "falls back to status freemem when status mem is falsely saturated",
+			memTotal: 8 * giB,
+			status: &proxmox.VMStatus{
+				Mem:     8 * giB,
+				FreeMem: 5 * giB,
+			},
+			wantUsed:   3 * giB,
+			wantSource: "status-freemem",
+		},
+		{
+			name:     "uses status freemem when status mem is absent",
+			memTotal: 8 * giB,
+			status: &proxmox.VMStatus{
+				FreeMem: 6 * giB,
+			},
+			wantUsed:   2 * giB,
+			wantSource: "status-freemem",
+		},
+		{
+			name:       "returns empty selection without usable fields",
+			memTotal:   8 * giB,
+			status:     &proxmox.VMStatus{},
+			wantUsed:   0,
+			wantSource: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := selectVMLowTrustUsedMemory(tt.memTotal, tt.status)
+			if got.Used != tt.wantUsed {
+				t.Fatalf("used = %d, want %d", got.Used, tt.wantUsed)
+			}
+			if got.Source != tt.wantSource {
+				t.Fatalf("source = %q, want %q", got.Source, tt.wantSource)
+			}
+		})
+	}
+}

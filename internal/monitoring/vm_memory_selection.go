@@ -14,6 +14,11 @@ type vmMemAvailableSelection struct {
 	TotalMinusUsed uint64
 }
 
+type vmLowTrustUsedSelection struct {
+	Used   uint64
+	Source string
+}
+
 // selectVMAvailableFromMemInfo evaluates VM meminfo data from the QEMU guest
 // agent and returns:
 // - a primary cache-aware memAvailable value when meminfo is trustworthy
@@ -75,4 +80,37 @@ func saturatingAddUint64(lhs, rhs uint64) uint64 {
 		return math.MaxUint64
 	}
 	return lhs + rhs
+}
+
+// selectVMLowTrustUsedMemory chooses the least-wrong memory-used fallback when
+// we have no cache-aware availability figure. Prefer status.mem in the general
+// case because it is already relative to the guest-visible balloon size.
+//
+// However, when status.mem reports a fully saturated VM but status.freemem
+// still shows meaningful headroom, treat the free-based calculation as the
+// safer fallback. This avoids locking Windows guests onto false 100% samples
+// when Proxmox emits a bogus full-used reading alongside a sane free value.
+func selectVMLowTrustUsedMemory(memTotal uint64, status *proxmox.VMStatus) vmLowTrustUsedSelection {
+	if status == nil {
+		return vmLowTrustUsedSelection{}
+	}
+
+	hasFreeFallback := status.FreeMem > 0 && memTotal >= status.FreeMem
+	freeDerivedUsed := uint64(0)
+	if hasFreeFallback {
+		freeDerivedUsed = memTotal - status.FreeMem
+	}
+
+	if status.Mem > 0 {
+		if status.Mem >= memTotal && hasFreeFallback && freeDerivedUsed < memTotal {
+			return vmLowTrustUsedSelection{Used: freeDerivedUsed, Source: "status-freemem"}
+		}
+		return vmLowTrustUsedSelection{Used: status.Mem, Source: "status-mem"}
+	}
+
+	if hasFreeFallback {
+		return vmLowTrustUsedSelection{Used: freeDerivedUsed, Source: "status-freemem"}
+	}
+
+	return vmLowTrustUsedSelection{}
 }
