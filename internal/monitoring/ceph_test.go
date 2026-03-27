@@ -267,6 +267,35 @@ func TestCountServiceDaemons(t *testing.T) {
 	}
 }
 
+func TestCountCephDaemonSummaries(t *testing.T) {
+	t.Parallel()
+
+	status := &proxmox.CephStatus{
+		ServiceMap: proxmox.CephServiceMap{
+			Services: map[string]proxmox.CephServiceDefinition{
+				"mgr": {
+					Daemons: map[string]proxmox.CephServiceDaemon{
+						"mgr.node1": {Host: "node1", Status: "active"},
+					},
+				},
+			},
+		},
+		MonMap: proxmox.CephMonMap{NumMons: 3},
+		MgrMap: proxmox.CephMgrMap{
+			NumMgrs:    2,
+			ActiveName: "mgr.node1",
+			Standbys:   []string{"mgr.node2"},
+		},
+	}
+
+	if got := countCephMonitorDaemons(status); got != 3 {
+		t.Fatalf("countCephMonitorDaemons() = %d, want 3", got)
+	}
+	if got := countCephManagerDaemons(status); got != 2 {
+		t.Fatalf("countCephManagerDaemons() = %d, want 2", got)
+	}
+}
+
 func TestExtractCephCheckSummary(t *testing.T) {
 	t.Parallel()
 
@@ -706,6 +735,37 @@ func TestBuildCephClusterModel(t *testing.T) {
 				}
 				if monService.Message != "Offline: c@node3" {
 					t.Errorf("mon.Message = %q, want %q", monService.Message, "Offline: c@node3")
+				}
+			},
+		},
+		{
+			name:         "explicit monmap and mgrmap counts override partial servicemap",
+			instanceName: "ceph-summary-test",
+			status: &proxmox.CephStatus{
+				FSID: "fsid-summary",
+				ServiceMap: proxmox.CephServiceMap{
+					Services: map[string]proxmox.CephServiceDefinition{
+						"mgr": {
+							Daemons: map[string]proxmox.CephServiceDaemon{
+								"mgr.node1": {Host: "node1", Status: "active"},
+							},
+						},
+					},
+				},
+				MonMap: proxmox.CephMonMap{NumMons: 3},
+				MgrMap: proxmox.CephMgrMap{
+					NumMgrs:    2,
+					ActiveName: "mgr.node1",
+					Standbys:   []string{"mgr.node2"},
+				},
+			},
+			df: nil,
+			check: func(t *testing.T, cluster models.CephCluster) {
+				if cluster.NumMons != 3 {
+					t.Errorf("NumMons = %d, want 3", cluster.NumMons)
+				}
+				if cluster.NumMgrs != 2 {
+					t.Errorf("NumMgrs = %d, want 2", cluster.NumMgrs)
 				}
 			},
 		},

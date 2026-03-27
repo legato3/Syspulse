@@ -27,6 +27,14 @@ func TestGetCephStatus(t *testing.T) {
 				"servicemap": map[string]interface{}{
 					"services": map[string]interface{}{},
 				},
+				"monmap": map[string]interface{}{
+					"num_mons": 3,
+				},
+				"mgrmap": map[string]interface{}{
+					"num_mgrs":    2,
+					"active_name": "mgr.node1",
+					"standbys":    []string{"mgr.node2"},
+				},
 				"osdmap": map[string]interface{}{
 					"num_osds":    1,
 					"num_up_osds": 1,
@@ -48,6 +56,15 @@ func TestGetCephStatus(t *testing.T) {
 	}
 	if status.FSID != "fsid-1" || status.Health.Status != "HEALTH_OK" {
 		t.Fatalf("unexpected status: %+v", status)
+	}
+	if status.MonMap.NumMons != 3 {
+		t.Fatalf("MonMap.NumMons = %d, want 3", status.MonMap.NumMons)
+	}
+	if status.MgrMap.NumMgrs != 2 {
+		t.Fatalf("MgrMap.NumMgrs = %d, want 2", status.MgrMap.NumMgrs)
+	}
+	if status.MgrMap.ActiveName != "mgr.node1" {
+		t.Fatalf("MgrMap.ActiveName = %q, want %q", status.MgrMap.ActiveName, "mgr.node1")
 	}
 }
 
