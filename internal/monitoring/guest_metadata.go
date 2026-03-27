@@ -611,9 +611,9 @@ func processGuestNetworkInterfaces(raw []proxmox.VMNetworkInterface) ([]string, 
 			if ifaceName == "" || lowerName == "lo" || lowerName == "loopback" {
 				continue
 			}
-			if mac == "" || mac == "00:00:00:00:00:00" {
-				continue
-			}
+			// Preserve named non-loopback interfaces even when early/partial guest-agent
+			// payloads have not populated MAC or IP details yet. The interface identity
+			// is still useful for the VM Summary view and should not wait for a later poll.
 		}
 
 		guestIfaces = append(guestIfaces, models.GuestNetworkInterface{
