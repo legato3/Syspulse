@@ -30,6 +30,28 @@ func (e fakeDirEntry) IsDir() bool                { return false }
 func (e fakeDirEntry) Type() fs.FileMode          { return 0 }
 func (e fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
+func forceLinuxLSBLKFallback(t *testing.T) {
+	t.Helper()
+
+	origGOOS := runtimeGOOS
+	origReadDir := readDir
+	origReadFile := readFile
+	origEvalSymlinks := evalSymlinks
+	t.Cleanup(func() {
+		runtimeGOOS = origGOOS
+		readDir = origReadDir
+		readFile = origReadFile
+		evalSymlinks = origEvalSymlinks
+	})
+
+	runtimeGOOS = "linux"
+	readDir = func(string) ([]fs.DirEntry, error) {
+		return nil, errors.New("sysfs unavailable")
+	}
+	readFile = func(string) ([]byte, error) { return nil, fs.ErrNotExist }
+	evalSymlinks = func(string) (string, error) { return "", fs.ErrNotExist }
+}
+
 func TestListBlockDevices(t *testing.T) {
 	origRun := runCommandOutput
 	origGOOS := runtimeGOOS
@@ -268,6 +290,7 @@ func TestListBlockDevicesLinuxSysfsSkipsVirtualMetadata(t *testing.T) {
 
 func TestListBlockDevicesError(t *testing.T) {
 	origRun := runCommandOutput
+	forceLinuxLSBLKFallback(t)
 	t.Cleanup(func() { runCommandOutput = origRun })
 
 	runCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -291,6 +314,7 @@ func TestDefaultRunCommandOutput(t *testing.T) {
 
 func TestCollectLocalNoDevices(t *testing.T) {
 	origRun := runCommandOutput
+	forceLinuxLSBLKFallback(t)
 	t.Cleanup(func() { runCommandOutput = origRun })
 
 	runCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -311,6 +335,7 @@ func TestCollectLocalNoDevices(t *testing.T) {
 
 func TestCollectLocalListDevicesError(t *testing.T) {
 	origRun := runCommandOutput
+	forceLinuxLSBLKFallback(t)
 	t.Cleanup(func() { runCommandOutput = origRun })
 
 	runCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -326,6 +351,7 @@ func TestCollectLocalSkipsErrors(t *testing.T) {
 	origRun := runCommandOutput
 	origLook := execLookPath
 	origNow := timeNow
+	forceLinuxLSBLKFallback(t)
 	t.Cleanup(func() {
 		runCommandOutput = origRun
 		execLookPath = origLook
@@ -781,10 +807,9 @@ func TestCollectDeviceSMARTWWN(t *testing.T) {
 
 func TestListBlockDevicesSkipsVirtualLinuxDevices(t *testing.T) {
 	origRun := runCommandOutput
-	origGOOS := runtimeGOOS
-	t.Cleanup(func() { runCommandOutput = origRun; runtimeGOOS = origGOOS })
+	forceLinuxLSBLKFallback(t)
+	t.Cleanup(func() { runCommandOutput = origRun })
 
-	runtimeGOOS = "linux"
 	runCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name != "lsblk" {
 			return nil, errors.New("unexpected command")
