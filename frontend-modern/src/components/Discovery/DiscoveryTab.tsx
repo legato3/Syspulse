@@ -10,6 +10,7 @@ import {
     getConfidenceLevel,
     getConnectedAgents,
 } from '../../api/discovery';
+import { AIAPI } from '@/api/ai';
 import { GuestMetadataAPI } from '../../api/guestMetadata';
 import { eventBus } from '../../stores/events';
 
@@ -98,10 +99,25 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
     // Track if we initiated scan via HTTP to prevent WebSocket race conditions
     const [httpScanInProgress, setHttpScanInProgress] = createSignal(false);
 
+    const [aiSettings] = createResource(async () => {
+        try {
+            return await AIAPI.getSettings();
+        } catch {
+            return null;
+        }
+    });
+
+    const discoveryFeatureResolved = () => !aiSettings.loading;
+    const discoveryFeatureEnabled = () =>
+        discoveryFeatureResolved() && aiSettings()?.discovery_enabled !== false;
+    const discoveryFeatureKnownDisabled = () =>
+        discoveryFeatureResolved() && aiSettings()?.discovery_enabled === false;
+
     // Fetch discovery info (AI provider, commands) - used for pre-scan transparency
     const [discoveryInfo] = createResource(
-        () => props.resourceType,
+        () => discoveryFeatureEnabled() ? props.resourceType : null,
         async (type) => {
+            if (!type) return null;
             try {
                 return await getDiscoveryInfo(type);
             } catch {
@@ -112,7 +128,11 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
 
     // Fetch connected agents (for WebSocket command execution)
     const [connectedAgents] = createResource(
-        async () => {
+        () => discoveryFeatureEnabled() && props.resourceType === 'host',
+        async (enabled) => {
+            if (!enabled) {
+                return { count: 0, agents: [] };
+            }
             try {
                 return await getConnectedAgents();
             } catch {
@@ -149,8 +169,11 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
 
     // Fetch discovery data
     const [discovery, { refetch, mutate }] = createResource(
-        () => ({ type: props.resourceType, host: props.hostId, id: props.resourceId }),
+        () => discoveryFeatureEnabled() ? ({ type: props.resourceType, host: props.hostId, id: props.resourceId }) : null,
         async (params) => {
+            if (!params) {
+                return null;
+            }
             try {
                 const result = await getDiscovery(params.type, params.host, params.id);
                 setHasFetched(true);
@@ -189,6 +212,10 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
 
     // Handle triggering a new discovery
     const handleTriggerDiscovery = async (force = false) => {
+        if (!discoveryFeatureEnabled()) {
+            setScanError('AI discovery is disabled in Settings → AI.');
+            return;
+        }
         setIsScanning(true);
         setHttpScanInProgress(true); // Prevent WebSocket from resetting state
         setScanProgress(null);
@@ -265,6 +292,9 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
     const resourceId = () => makeResourceId(props.resourceType, props.hostId, props.resourceId);
 
     createEffect(() => {
+        if (!discoveryFeatureEnabled()) {
+            return;
+        }
         const unsubscribe = eventBus.on('ai_discovery_progress', (progress) => {
             // Only update if this progress is for our resource
             if (progress && progress.resource_id === resourceId()) {
@@ -329,8 +359,24 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
 
     return (
         <div class="space-y-4">
+            <Show when={discoveryFeatureKnownDisabled()}>
+                <div class="rounded border border-amber-200 bg-amber-50/80 p-3 shadow-sm dark:border-amber-800/50 dark:bg-amber-900/20">
+                    <div class="flex items-start gap-2.5">
+                        <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div class="text-xs text-amber-800 dark:text-amber-200">
+                            <p class="font-medium mb-1">AI Discovery Disabled</p>
+                            <p class="text-amber-700 dark:text-amber-300">
+                                Enable infrastructure discovery in Settings → AI before using this tab.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </Show>
+
             {/* AI Provider Badge - Always visible when AI is configured */}
-            <Show when={!discoveryInfo.loading && discoveryInfo()?.ai_provider}>
+            <Show when={!discoveryFeatureKnownDisabled() && !discoveryInfo.loading && discoveryInfo()?.ai_provider}>
                 <div class="flex items-center gap-2">
                     <Show
                         when={discoveryInfo()?.ai_provider?.is_local}
@@ -356,7 +402,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* "What Discovery Does" Explanation - Shown when no discovery yet */}
-            <Show when={hasFetched() && !discovery() && !discovery.loading && showExplanation()}>
+            <Show when={!discoveryFeatureKnownDisabled() && hasFetched() && !discovery() && !discovery.loading && showExplanation()}>
                 <div class="rounded border border-amber-200 bg-amber-50/80 p-3 shadow-sm dark:border-amber-800/50 dark:bg-amber-900/20">
                     <div class="flex items-start justify-between gap-3">
                         <div class="flex items-start gap-2.5">
@@ -385,7 +431,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* Commands Preview - Expandable before first scan */}
-            <Show when={hasFetched() && !discovery() && !discovery.loading && !discoveryInfo.loading && discoveryInfo()?.commands && discoveryInfo()!.commands!.length > 0}>
+            <Show when={!discoveryFeatureKnownDisabled() && hasFetched() && !discovery() && !discovery.loading && !discoveryInfo.loading && discoveryInfo()?.commands && discoveryInfo()!.commands!.length > 0}>
                 <details class="rounded border border-gray-200 bg-white/70 shadow-sm dark:border-gray-600/70 dark:bg-gray-900/30" open={showCommandsPreview()}>
                     <summary
                         class="p-2.5 text-xs font-medium text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 flex items-center gap-2"
@@ -416,7 +462,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* Loading state - delayed to prevent flash for fast loads */}
-            <Show when={showLoadingSpinner()}>
+            <Show when={!discoveryFeatureKnownDisabled() && showLoadingSpinner()}>
                 <div class="flex items-center justify-center py-8">
                     <div class="animate-spin h-6 w-6 border-2 border-blue-500 border-t-transparent rounded-full"></div>
                     <span class="ml-2 text-sm text-gray-500 dark:text-gray-400">Loading discovery...</span>
@@ -424,7 +470,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* Scan Progress Bar */}
-            <Show when={scanProgress() && isScanning()}>
+            <Show when={!discoveryFeatureKnownDisabled() && scanProgress() && isScanning()}>
                 <div class="rounded border border-blue-200 bg-blue-50 p-3 shadow-sm dark:border-blue-800 dark:bg-blue-900/30">
                     <div class="flex items-center justify-between mb-2">
                         <div class="flex items-center gap-2">
@@ -457,7 +503,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* Scanning state without WebSocket progress - show live timer */}
-            <Show when={isScanning() && !scanProgress()}>
+            <Show when={!discoveryFeatureKnownDisabled() && isScanning() && !scanProgress()}>
                 <div class="rounded border border-blue-200 bg-blue-50 p-3 shadow-sm dark:border-blue-800 dark:bg-blue-900/30">
                     <div class="flex items-center gap-2 mb-2">
                         <div class="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
@@ -473,7 +519,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* Scan Success */}
-            <Show when={scanSuccess()}>
+            <Show when={!discoveryFeatureKnownDisabled() && scanSuccess()}>
                 <div class="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-900/20">
                     <div class="flex items-center gap-2">
                         <svg class="w-5 h-5 text-green-500 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -485,7 +531,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* Scan Error */}
-            <Show when={scanError()}>
+            <Show when={!discoveryFeatureKnownDisabled() && scanError()}>
                 <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">
                     <div class="flex items-start gap-3">
                         <svg class="w-5 h-5 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -508,7 +554,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* No discovery yet - only show after initial fetch completes to prevent flash */}
-            <Show when={hasFetched() && !discovery.loading && !discovery() && !isScanning()}>
+            <Show when={!discoveryFeatureKnownDisabled() && hasFetched() && !discovery.loading && !discovery() && !isScanning()}>
                 <div class="text-center py-8">
                     <div class="text-gray-500 dark:text-gray-400 mb-4">
                         <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -587,7 +633,7 @@ export const DiscoveryTab: Component<DiscoveryTabProps> = (props) => {
             </Show>
 
             {/* Discovery exists but has no meaningful data - show re-scan option */}
-            <Show when={hasFetched() && !discovery.loading && discovery() && !hasValidDiscovery() && !isScanning()}>
+            <Show when={!discoveryFeatureKnownDisabled() && hasFetched() && !discovery.loading && discovery() && !hasValidDiscovery() && !isScanning()}>
                 <div class="text-center py-8">
                     <div class="text-gray-500 dark:text-gray-400 mb-4">
                         <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
