@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,12 @@ const (
 	patrolRetrySeedChars1   = 16000
 	patrolRetrySeedChars2   = 8000
 )
+
+var patrolContextWindowPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)"n_ctx"\s*:\s*(\d+)`),
+	regexp.MustCompile(`(?i)\bn_ctx\b[^0-9]{0,8}(\d+)`),
+	regexp.MustCompile(`(?i)available context size \((\d+) tokens\)`),
+}
 
 // CleanThinkingTokens removes model-specific thinking markers from AI responses.
 // Different AI models use different markers for their internal reasoning:
@@ -468,7 +476,8 @@ func (p *PatrolService) runAIAnalysis(ctx context.Context, state models.StateSna
 		}, nil
 	}
 
-	retryBudgets := []int{patrolRetrySeedChars1, patrolRetrySeedChars2}
+	var retryBudgets []int
+	retryBudgetIndex := 0
 	attemptPrompt := seedContext
 	var attemptResult *patrolStreamAttempt
 	var chatErr error
@@ -484,7 +493,7 @@ func (p *PatrolService) runAIAnalysis(ctx context.Context, state models.StateSna
 			p.recordPatrolUsage("patrol", attemptResult.resp.InputTokens, attemptResult.resp.OutputTokens)
 		}
 
-		if !isPatrolContextWindowError(chatErr) || attempt >= len(retryBudgets) {
+		if !isPatrolContextWindowError(chatErr) {
 			if !noStream {
 				p.setStreamPhase("idle")
 				p.broadcast(PatrolStreamEvent{Type: "error", Content: chatErr.Error()})
@@ -492,8 +501,19 @@ func (p *PatrolService) runAIAnalysis(ctx context.Context, state models.StateSna
 			return nil, fmt.Errorf("agentic patrol failed: %w", chatErr)
 		}
 
-		reducedPrompt := reducePatrolSeedContext(seedContext, retryBudgets[attempt])
-		if len(reducedPrompt) >= len(attemptPrompt) {
+		if retryBudgets == nil {
+			retryBudgets = patrolSeedRetryBudgets(chatErr)
+		}
+		if retryBudgetIndex >= len(retryBudgets) {
+			if !noStream {
+				p.setStreamPhase("idle")
+				p.broadcast(PatrolStreamEvent{Type: "error", Content: chatErr.Error()})
+			}
+			return nil, fmt.Errorf("agentic patrol failed: %w", chatErr)
+		}
+		reducedPrompt, reducedBudget, nextIndex := nextReducedPatrolPrompt(seedContext, attemptPrompt, retryBudgets, retryBudgetIndex)
+		retryBudgetIndex = nextIndex
+		if reducedBudget == 0 || len(reducedPrompt) >= len(attemptPrompt) {
 			if !noStream {
 				p.setStreamPhase("idle")
 				p.broadcast(PatrolStreamEvent{Type: "error", Content: chatErr.Error()})
@@ -502,8 +522,9 @@ func (p *PatrolService) runAIAnalysis(ctx context.Context, state models.StateSna
 		}
 
 		log.Warn().
-			Int("retry", attempt+1).
+			Int("retry", retryBudgetIndex).
 			Int("seed_chars", len(seedContext)).
+			Int("retry_budget_chars", reducedBudget).
 			Int("reduced_seed_chars", len(reducedPrompt)).
 			Err(chatErr).
 			Msg("AI Patrol: Retrying with reduced seed context after provider context-window error")
@@ -1393,6 +1414,83 @@ func isPatrolContextWindowError(err error) bool {
 		strings.Contains(msg, "context window") ||
 		strings.Contains(msg, "context length") ||
 		strings.Contains(msg, "n_ctx")
+}
+
+func patrolSeedRetryBudgets(err error) []int {
+	defaultBudgets := []int{patrolRetrySeedChars1, patrolRetrySeedChars2}
+	nctx := extractPatrolContextWindow(err)
+	if nctx <= 0 {
+		return defaultBudgets
+	}
+
+	adaptiveBudgets := []int{
+		minInt(patrolRetrySeedChars1, nctx*2),
+		minInt(patrolRetrySeedChars2, nctx),
+		maxInt(2000, nctx/2),
+	}
+
+	return uniquePositiveInts(adaptiveBudgets...)
+}
+
+func extractPatrolContextWindow(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	msg := err.Error()
+	for _, pattern := range patrolContextWindowPatterns {
+		matches := pattern.FindStringSubmatch(msg)
+		if len(matches) < 2 {
+			continue
+		}
+		nctx, convErr := strconv.Atoi(matches[1])
+		if convErr == nil && nctx > 0 {
+			return nctx
+		}
+	}
+
+	return 0
+}
+
+func nextReducedPatrolPrompt(seedContext, currentPrompt string, budgets []int, start int) (string, int, int) {
+	for idx := start; idx < len(budgets); idx++ {
+		budget := budgets[idx]
+		reduced := reducePatrolSeedContext(seedContext, budget)
+		if len(reduced) < len(currentPrompt) {
+			return reduced, budget, idx + 1
+		}
+	}
+	return currentPrompt, 0, len(budgets)
+}
+
+func uniquePositiveInts(values ...int) []int {
+	result := make([]int, 0, len(values))
+	seen := make(map[int]struct{}, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // buildScopedSet constructs the set of resource IDs in scope, expanding with correlated resources.
