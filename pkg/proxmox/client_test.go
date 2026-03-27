@@ -265,6 +265,17 @@ func TestVMFileSystemUnmarshalFlexibleNumbers(t *testing.T) {
 			t.Fatalf("unexpected privileged values: got total=%d privileged=%d used=%d", fs.TotalBytes, fs.TotalBytesPrivileged, fs.UsedBytes)
 		}
 	})
+
+	t.Run("uses windows name as mountpoint fallback when mountpoint is empty", func(t *testing.T) {
+		payload := `{"name":"C:\\Windows","type":"ntfs","mountpoint":"","total-bytes":536870912000,"used-bytes":214748364800}`
+		var fs VMFileSystem
+		if err := json.Unmarshal([]byte(payload), &fs); err != nil {
+			t.Fatalf("unexpected error unmarshalling windows name fallback: %v", err)
+		}
+		if fs.Mountpoint != "C:\\Windows" {
+			t.Fatalf("expected windows mountpoint fallback from name, got %q", fs.Mountpoint)
+		}
+	})
 }
 
 func TestVMFileSystemUnmarshalJSON_InvalidValues(t *testing.T) {

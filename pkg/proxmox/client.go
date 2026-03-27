@@ -1460,12 +1460,34 @@ func (fs *VMFileSystem) UnmarshalJSON(data []byte) error {
 	fs.Name = raw.Name
 	fs.Type = raw.Type
 	fs.Mountpoint = raw.Mountpoint
+	if fs.Mountpoint == "" {
+		if normalized, ok := normalizeWindowsDriveMountpoint(raw.Name); ok {
+			fs.Mountpoint = normalized
+		}
+	}
 	fs.TotalBytes = total
 	fs.TotalBytesPrivileged = totalPrivileged
 	fs.UsedBytes = used
 	fs.DiskRaw = raw.DiskRaw
 	fs.Disk = ""
 	return nil
+}
+
+func normalizeWindowsDriveMountpoint(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || value[1] != ':' {
+		return "", false
+	}
+	drive := strings.ToUpper(value[:2])
+	if len(value) == 2 {
+		return drive, true
+	}
+	switch value[2] {
+	case '\\', '/':
+		return drive + value[2:], true
+	default:
+		return "", false
+	}
 }
 
 func parseUint64Flexible(value interface{}) (uint64, error) {
@@ -1585,16 +1607,16 @@ func (c *Client) GetVMFSInfo(ctx context.Context, node string, vmid int) ([]VMFi
 					}
 				}
 			}
-			// If we still don't have a disk identifier, use the mountpoint as a fallback
+			// If we still don't have a disk identifier, use the normalized mountpoint as a fallback
 			if fs.Disk == "" && fs.Mountpoint != "" {
 				// For root filesystem, use a special identifier
 				if fs.Mountpoint == "/" {
 					fs.Disk = "root-filesystem"
 				} else {
 					// For Windows, normalize drive letters to prevent duplicate counting
-					// Windows guest agent can return multiple directory entries (C:\, C:\Users, C:\Windows)
+					// Windows guest agent can return multiple directory entries (C:, C:\, C:\Users, C:\Windows)
 					// all on the same physical drive. Without disk[] metadata, we must deduplicate by drive letter.
-					isWindowsDrive := len(fs.Mountpoint) >= 2 && fs.Mountpoint[1] == ':' && strings.Contains(fs.Mountpoint, "\\")
+					isWindowsDrive := len(fs.Mountpoint) >= 2 && fs.Mountpoint[1] == ':'
 					if isWindowsDrive {
 						// Use drive letter as identifier (e.g., "C:" for C:\, C:\Users, etc.)
 						driveLetter := strings.ToUpper(fs.Mountpoint[:2])
