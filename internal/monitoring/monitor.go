@@ -3083,6 +3083,10 @@ func (m *Monitor) ApplyDockerReport(report agentsdocker.Report, tokenRecord *con
 		IsLegacy:          isLegacyDockerAgent(report.Agent.Type),
 	}
 
+	if hasPrevious {
+		m.migrateDockerContainerMetadataForRecreatedContainers(previous, host)
+	}
+
 	if tokenRecord != nil {
 		host.TokenID = tokenRecord.ID
 		host.TokenName = tokenRecord.Name
@@ -3197,6 +3201,66 @@ func (m *Monitor) ApplyDockerReport(report agentsdocker.Report, tokenRecord *con
 		Msg("Docker host report processed")
 
 	return host, nil
+}
+
+func (m *Monitor) migrateDockerContainerMetadataForRecreatedContainers(previous, current models.DockerHost) {
+	if m == nil || m.dockerMetadataStore == nil {
+		return
+	}
+	if strings.TrimSpace(previous.ID) == "" || strings.TrimSpace(current.ID) == "" {
+		return
+	}
+	if previous.ID != current.ID {
+		return
+	}
+
+	previousByName := make(map[string]models.DockerContainer)
+	ambiguous := make(map[string]struct{})
+	for _, container := range previous.Containers {
+		name := normalizeDockerContainerMetadataIdentity(container.Name)
+		if name == "" || strings.TrimSpace(container.ID) == "" {
+			continue
+		}
+		if _, exists := previousByName[name]; exists {
+			ambiguous[name] = struct{}{}
+			delete(previousByName, name)
+			continue
+		}
+		if _, dup := ambiguous[name]; dup {
+			continue
+		}
+		previousByName[name] = container
+	}
+
+	for _, container := range current.Containers {
+		name := normalizeDockerContainerMetadataIdentity(container.Name)
+		if name == "" || strings.TrimSpace(container.ID) == "" {
+			continue
+		}
+		if _, dup := ambiguous[name]; dup {
+			continue
+		}
+		previousContainer, ok := previousByName[name]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(previousContainer.ID) == strings.TrimSpace(container.ID) {
+			continue
+		}
+		if err := m.CopyDockerContainerMetadata(current.ID, previousContainer.ID, container.ID); err != nil {
+			log.Warn().
+				Err(err).
+				Str("dockerHostID", current.ID).
+				Str("containerName", container.Name).
+				Str("oldContainerID", previousContainer.ID).
+				Str("newContainerID", container.ID).
+				Msg("Failed to migrate docker container metadata after observed recreation")
+		}
+	}
+}
+
+func normalizeDockerContainerMetadataIdentity(name string) string {
+	return strings.TrimSpace(strings.TrimPrefix(name, "/"))
 }
 
 // ApplyHostReport ingests a host agent report into the shared state.
