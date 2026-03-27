@@ -40,6 +40,42 @@ func TestMonitor_GetConnectionStatuses_MockMode_Extra(t *testing.T) {
 	}
 }
 
+func TestMonitor_GetStateRefreshesAlertSnapshots(t *testing.T) {
+	m := &Monitor{
+		state:        models.NewState(),
+		alertManager: alerts.NewManager(),
+	}
+	defer m.alertManager.Stop()
+
+	// Simulate stale alert data lingering in state after alerts were cleared.
+	m.state.UpdateActiveAlerts([]models.Alert{{
+		ID:         "stale-alert",
+		ResourceID: "vm-1",
+		Type:       "cpu",
+		Level:      "warning",
+		Message:    "stale",
+		StartTime:  time.Now(),
+	}})
+	m.alertManager.ClearActiveAlerts()
+
+	state := m.GetState()
+	if len(state.ActiveAlerts) != 0 {
+		t.Fatalf("expected GetState to drop stale state alerts, got %d", len(state.ActiveAlerts))
+	}
+
+	// Also prove that GetState reflects current alert-manager alerts even before
+	// an explicit SyncAlertState call updates the cached state.
+	host := models.DockerHost{ID: "docker-host-1", DisplayName: "docker-host-1"}
+	m.alertManager.HandleDockerHostOffline(host)
+	m.alertManager.HandleDockerHostOffline(host)
+	m.alertManager.HandleDockerHostOffline(host)
+
+	state = m.GetState()
+	if len(state.ActiveAlerts) == 0 {
+		t.Fatal("expected GetState to include current alert-manager alerts")
+	}
+}
+
 func TestMonitor_Stop_Extra(t *testing.T) {
 	m := &Monitor{}
 	m.Stop()

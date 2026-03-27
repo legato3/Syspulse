@@ -5480,6 +5480,26 @@ func (m *Monitor) syncAlertsToState() {
 		}
 	}
 
+	modelAlerts := m.currentModelAlerts()
+	m.state.UpdateActiveAlerts(modelAlerts)
+
+	recentlyResolved := m.currentRecentlyResolvedAlerts()
+	if len(recentlyResolved) > 0 {
+		log.Info().Int("count", len(recentlyResolved)).Msg("Syncing recently resolved alerts")
+	}
+	m.state.UpdateRecentlyResolved(recentlyResolved)
+}
+
+// SyncAlertState is the exported wrapper used by APIs that mutate alerts outside the poll loop.
+func (m *Monitor) SyncAlertState() {
+	m.syncAlertsToState()
+}
+
+func (m *Monitor) currentModelAlerts() []models.Alert {
+	if m.alertManager == nil {
+		return nil
+	}
+
 	activeAlerts := m.alertManager.GetActiveAlerts()
 	modelAlerts := make([]models.Alert, 0, len(activeAlerts))
 	for _, alert := range activeAlerts {
@@ -5504,18 +5524,14 @@ func (m *Monitor) syncAlertsToState() {
 			log.Debug().Str("alertID", alert.ID).Interface("ackTime", alert.AckTime).Msg("Syncing acknowledged alert")
 		}
 	}
-	m.state.UpdateActiveAlerts(modelAlerts)
-
-	recentlyResolved := m.alertManager.GetRecentlyResolved()
-	if len(recentlyResolved) > 0 {
-		log.Info().Int("count", len(recentlyResolved)).Msg("Syncing recently resolved alerts")
-	}
-	m.state.UpdateRecentlyResolved(recentlyResolved)
+	return modelAlerts
 }
 
-// SyncAlertState is the exported wrapper used by APIs that mutate alerts outside the poll loop.
-func (m *Monitor) SyncAlertState() {
-	m.syncAlertsToState()
+func (m *Monitor) currentRecentlyResolvedAlerts() []models.ResolvedAlert {
+	if m.alertManager == nil {
+		return nil
+	}
+	return m.alertManager.GetRecentlyResolved()
 }
 
 // pruneStaleDockerAlerts removes docker alerts that reference hosts no longer present in state.
@@ -9599,7 +9615,13 @@ func (m *Monitor) GetState() models.StateSnapshot {
 		}
 		return state
 	}
-	return m.state.GetSnapshot()
+
+	state := m.state.GetSnapshot()
+	// Keep externally-served state aligned with the alert manager even between
+	// explicit sync points, so APIs do not expose stale alert counts/attachments.
+	state.ActiveAlerts = m.currentModelAlerts()
+	state.RecentlyResolved = m.currentRecentlyResolvedAlerts()
+	return state
 }
 
 // SetOrgID sets the organization ID for this monitor instance.
