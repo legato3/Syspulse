@@ -133,6 +133,16 @@ func TestSelectVMLowTrustUsedMemory(t *testing.T) {
 			wantSource: "status-freemem",
 		},
 		{
+			name:     "falls back to status freemem when status mem and freemem are materially inconsistent",
+			memTotal: 8 * giB,
+			status: &proxmox.VMStatus{
+				Mem:     7920 * 1024 * 1024,
+				FreeMem: 5 * giB,
+			},
+			wantUsed:   3 * giB,
+			wantSource: "status-freemem",
+		},
+		{
 			name:     "uses status freemem when status mem is absent",
 			memTotal: 8 * giB,
 			status: &proxmox.VMStatus{
@@ -147,6 +157,16 @@ func TestSelectVMLowTrustUsedMemory(t *testing.T) {
 			status:     &proxmox.VMStatus{},
 			wantUsed:   0,
 			wantSource: "",
+		},
+		{
+			name:     "keeps status mem when freemem only shows tiny headroom",
+			memTotal: 8 * giB,
+			status: &proxmox.VMStatus{
+				Mem:     8*giB - (64 * 1024 * 1024),
+				FreeMem: 64 * 1024 * 1024,
+			},
+			wantUsed:   8*giB - (64 * 1024 * 1024),
+			wantSource: "status-mem",
 		},
 	}
 

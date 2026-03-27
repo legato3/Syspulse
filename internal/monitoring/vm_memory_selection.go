@@ -6,7 +6,8 @@ import (
 	"github.com/rcourtman/pulse-go-rewrite/pkg/proxmox"
 )
 
-const vmMemInfoGapTolerance uint64 = 16 * 1024 * 1024 // 16 MiB
+const vmMemInfoGapTolerance uint64 = 16 * 1024 * 1024            // 16 MiB
+const vmStatusMemoryMismatchTolerance uint64 = 128 * 1024 * 1024 // 128 MiB
 
 type vmMemAvailableSelection struct {
 	Available      uint64
@@ -102,8 +103,14 @@ func selectVMLowTrustUsedMemory(memTotal uint64, status *proxmox.VMStatus) vmLow
 	}
 
 	if status.Mem > 0 {
-		if status.Mem >= memTotal && hasFreeFallback && freeDerivedUsed < memTotal {
-			return vmLowTrustUsedSelection{Used: freeDerivedUsed, Source: "status-freemem"}
+		if hasFreeFallback && freeDerivedUsed < status.Mem {
+			statusMemPlusFree := saturatingAddUint64(status.Mem, status.FreeMem)
+			if status.Mem >= memTotal && freeDerivedUsed < memTotal {
+				return vmLowTrustUsedSelection{Used: freeDerivedUsed, Source: "status-freemem"}
+			}
+			if statusMemPlusFree > memTotal+vmStatusMemoryMismatchTolerance {
+				return vmLowTrustUsedSelection{Used: freeDerivedUsed, Source: "status-freemem"}
+			}
 		}
 		return vmLowTrustUsedSelection{Used: status.Mem, Source: "status-mem"}
 	}
