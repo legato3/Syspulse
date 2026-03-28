@@ -9,6 +9,8 @@
 package audit
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sync"
 	"time"
 
@@ -132,6 +134,7 @@ func NewConsoleLogger() *ConsoleLogger {
 
 // Log writes an audit event to zerolog.
 func (c *ConsoleLogger) Log(event Event) error {
+	detailsPresent, detailsLen, detailsDigest := summarizeAuditDetails(event.Details)
 	logEvent := log.With().
 		Str("audit_id", event.ID).
 		Str("event", event.EventType).
@@ -139,7 +142,9 @@ func (c *ConsoleLogger) Log(event Event) error {
 		Str("ip", event.IP).
 		Str("path", event.Path).
 		Time("timestamp", event.Timestamp).
-		Str("details", event.Details).
+		Bool("details_present", detailsPresent).
+		Int("details_len", detailsLen).
+		Str("details_sha256", detailsDigest).
 		Logger()
 
 	if event.Success {
@@ -149,6 +154,14 @@ func (c *ConsoleLogger) Log(event Event) error {
 	}
 
 	return nil
+}
+
+func summarizeAuditDetails(details string) (present bool, length int, digest string) {
+	if details == "" {
+		return false, 0, ""
+	}
+	sum := sha256.Sum256([]byte(details))
+	return true, len(details), hex.EncodeToString(sum[:])
 }
 
 // Query returns an empty slice for the console logger.

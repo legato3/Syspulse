@@ -369,33 +369,31 @@ func intFromAny(value interface{}) (int, bool) {
 	case int32:
 		return int(v), true
 	case int64:
-		return int(v), true
+		return intFromInt64Checked(v)
 	case uint:
-		return int(v), true
+		return intFromUint64Checked(uint64(v))
 	case uint8:
 		return int(v), true
 	case uint16:
 		return int(v), true
 	case uint32:
-		return int(v), true
+		return intFromUint64Checked(uint64(v))
 	case uint64:
-		return int(v), true
+		return intFromUint64Checked(v)
 	case float32:
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-			return 0, false
-		}
-		return int(math.Round(float64(v))), true
+		return intFromFloat64RoundedChecked(float64(v))
 	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
+		return intFromFloat64RoundedChecked(v)
+	case json.Number:
+		s := strings.TrimSpace(v.String())
+		if i, err := v.Int64(); err == nil {
+			return intFromInt64Checked(i)
+		}
+		if !looksLikeFloatLiteral(s) {
 			return 0, false
 		}
-		return int(math.Round(v)), true
-	case json.Number:
-		if i, err := v.Int64(); err == nil {
-			return int(i), true
-		}
-		if f, err := v.Float64(); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
-			return int(math.Round(f)), true
+		if f, err := v.Float64(); err == nil {
+			return intFromFloat64RoundedChecked(f)
 		}
 	case string:
 		s := strings.TrimSpace(v)
@@ -403,13 +401,20 @@ func intFromAny(value interface{}) (int, bool) {
 			return 0, false
 		}
 		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return int(i), true
+			return intFromInt64Checked(i)
 		}
-		if f, err := strconv.ParseFloat(s, 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
-			return int(math.Round(f)), true
+		if !looksLikeFloatLiteral(s) {
+			return 0, false
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return intFromFloat64RoundedChecked(f)
 		}
 	}
 	return 0, false
+}
+
+func looksLikeFloatLiteral(s string) bool {
+	return strings.ContainsAny(s, ".eE")
 }
 
 func boolFromAny(value interface{}) (bool, bool) {

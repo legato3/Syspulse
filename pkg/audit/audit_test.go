@@ -5,6 +5,24 @@ import (
 	"time"
 )
 
+func TestSummarizeAuditDetails(t *testing.T) {
+	present, length, digest := summarizeAuditDetails("apiToken=secret-value")
+	if !present {
+		t.Fatal("expected details to be marked present")
+	}
+	if length != len("apiToken=secret-value") {
+		t.Fatalf("length = %d", length)
+	}
+	if digest == "" {
+		t.Fatal("expected non-empty digest")
+	}
+
+	emptyPresent, emptyLength, emptyDigest := summarizeAuditDetails("")
+	if emptyPresent || emptyLength != 0 || emptyDigest != "" {
+		t.Fatalf("unexpected empty summary: %v %d %q", emptyPresent, emptyLength, emptyDigest)
+	}
+}
+
 func TestConsoleLogger_Log(t *testing.T) {
 	logger := NewConsoleLogger()
 

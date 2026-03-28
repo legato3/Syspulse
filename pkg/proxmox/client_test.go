@@ -582,6 +582,16 @@ func TestFlexIntUnmarshalJSON(t *testing.T) {
 			want:  FlexInt(1000000),
 		},
 		{
+			name:    "float overflow",
+			input:   "1e309",
+			wantErr: true,
+		},
+		{
+			name:    "string float overflow",
+			input:   `"1e309"`,
+			wantErr: true,
+		},
+		{
 			name:    "invalid string",
 			input:   `"not a number"`,
 			wantErr: true,
@@ -615,6 +625,19 @@ func TestFlexIntUnmarshalJSON(t *testing.T) {
 				t.Fatalf("got %d, want %d", f, tc.want)
 			}
 		})
+	}
+}
+
+func TestVMIpAddressUnmarshalJSONCapsPrefix(t *testing.T) {
+	var addr VMIpAddress
+	if err := addr.UnmarshalJSON([]byte(`{"ip-address":"2001:db8::1","prefix":"18446744073709551615"}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr.Address != "2001:db8::1" {
+		t.Fatalf("Address = %q", addr.Address)
+	}
+	if addr.Prefix != 128 {
+		t.Fatalf("Prefix = %d, want 128", addr.Prefix)
 	}
 }
 

@@ -32,7 +32,11 @@ func (f *FlexInt) UnmarshalJSON(data []byte) error {
 	// Try as float (handles cpulimit like 1.5)
 	var fl float64
 	if err := json.Unmarshal(data, &fl); err == nil {
-		*f = FlexInt(int(fl))
+		intVal, ok := intFromFloat64TruncChecked(fl)
+		if !ok {
+			return fmt.Errorf("float value out of range for FlexInt")
+		}
+		*f = FlexInt(intVal)
 		return nil
 	}
 
@@ -49,7 +53,11 @@ func (f *FlexInt) UnmarshalJSON(data []byte) error {
 	}
 
 	// Convert to int
-	*f = FlexInt(int(floatVal))
+	intVal, ok := intFromFloat64TruncChecked(floatVal)
+	if !ok {
+		return fmt.Errorf("float value out of range for FlexInt")
+	}
+	*f = FlexInt(intVal)
 	return nil
 }
 
@@ -1581,8 +1589,8 @@ func (a *VMIpAddress) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		prefix = 0
 	}
-	if prefix > math.MaxInt {
-		prefix = math.MaxInt
+	if prefix > 128 {
+		prefix = 128
 	}
 	a.Prefix = int(prefix)
 	return nil

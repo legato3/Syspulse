@@ -112,14 +112,19 @@ func TestIntFromAny(t *testing.T) {
 		{"json.Number int", json.Number("42"), 42, true},
 		{"json.Number float", json.Number("42.6"), 43, true},
 		{"json.Number invalid", json.Number("abc"), 0, false},
+		{"json.Number int overflow", json.Number("9223372036854775808"), 0, false},
 
 		// string
 		{"string int", "42", 42, true},
 		{"string negative", "-42", -42, true},
 		{"string float", "42.6", 43, true},
+		{"string int overflow", "9223372036854775808", 0, false},
+		{"string float overflow", "1e309", 0, false},
 		{"string empty", "", 0, false},
 		{"string whitespace", "  42  ", 42, true},
 		{"string invalid", "abc", 0, false},
+		{"uint64 overflow", uint64(maxInt) + 1, 0, false},
+		{"float64 overflow", float64(maxInt) * 2, 0, false},
 	}
 
 	for _, tc := range tests {
