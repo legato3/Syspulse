@@ -1,5 +1,5 @@
 name: Pulse Release Pipeline
-# Optimized: parallel jobs, fast RC path
+# Optimized: parallel jobs with consistent validation for RC and stable releases
 
 on:
   workflow_dispatch:
@@ -201,12 +201,11 @@ jobs:
             PULSE_LICENSE_PUBLIC_KEY=${{ secrets.PULSE_LICENSE_PUBLIC_KEY }}
             VERSION=${{ needs.prepare.outputs.tag }}
 
-  # Integration tests - skipped for prereleases (they've been tested in CI)
+  # Integration tests run for both prereleases and stable releases
   integration_tests:
     needs:
       - prepare
       - backend_tests
-    if: ${{ needs.prepare.outputs.is_prerelease != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -287,8 +286,8 @@ jobs:
       - backend_tests
       - docker_build
       - integration_tests
-    # Run if integration_tests passed OR was skipped (prereleases)
-    if: ${{ always() && needs.frontend_checks.result == 'success' && needs.backend_tests.result == 'success' && needs.docker_build.result == 'success' && (needs.integration_tests.result == 'success' || needs.integration_tests.result == 'skipped') }}
+    # Publish only after all validation jobs, including integration tests, pass
+    if: ${{ always() && needs.frontend_checks.result == 'success' && needs.backend_tests.result == 'success' && needs.docker_build.result == 'success' && needs.integration_tests.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
