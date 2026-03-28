@@ -163,3 +163,81 @@ func TestCloneStateCopiesPMGInstances(t *testing.T) {
 		t.Fatal("expected PMG instances to be deep-copied")
 	}
 }
+
+func TestNormalizeMockConfigBounds(t *testing.T) {
+	cfg := MockConfig{
+		NodeCount:                1000,
+		VMsPerNode:               1000,
+		LXCsPerNode:              1000,
+		DockerHostCount:          1000,
+		DockerContainersPerHost:  1000,
+		GenericHostCount:         1000,
+		K8sClusterCount:          1000,
+		K8sNodesPerCluster:       1000,
+		K8sPodsPerCluster:        10000,
+		K8sDeploymentsPerCluster: 1000,
+		StoppedPercent:           5,
+	}
+
+	got := normalizeMockConfig(cfg)
+
+	if got.NodeCount != maxMockNodeCount {
+		t.Fatalf("NodeCount = %d", got.NodeCount)
+	}
+	if got.VMsPerNode != maxMockGuestsPerNode || got.LXCsPerNode != maxMockGuestsPerNode {
+		t.Fatalf("guest counts not clamped: %+v", got)
+	}
+	if got.DockerHostCount != maxMockDockerHostCount || got.DockerContainersPerHost != maxMockDockerContainersPerHost {
+		t.Fatalf("docker counts not clamped: %+v", got)
+	}
+	if got.GenericHostCount != maxMockGenericHostCount {
+		t.Fatalf("GenericHostCount = %d", got.GenericHostCount)
+	}
+	if got.K8sClusterCount != maxMockK8sClusterCount || got.K8sNodesPerCluster != maxMockK8sNodesPerCluster {
+		t.Fatalf("k8s cluster counts not clamped: %+v", got)
+	}
+	if got.K8sPodsPerCluster != maxMockK8sPodsPerCluster || got.K8sDeploymentsPerCluster != maxMockK8sDeploymentsPerCluster {
+		t.Fatalf("k8s workload counts not clamped: %+v", got)
+	}
+	if got.StoppedPercent != 1 {
+		t.Fatalf("StoppedPercent = %v", got.StoppedPercent)
+	}
+}
+
+func TestLoadMockConfigClampsEnvironmentValues(t *testing.T) {
+	t.Setenv("PULSE_MOCK_NODES", "9999")
+	t.Setenv("PULSE_MOCK_VMS_PER_NODE", "9999")
+	t.Setenv("PULSE_MOCK_LXCS_PER_NODE", "9999")
+	t.Setenv("PULSE_MOCK_DOCKER_HOSTS", "9999")
+	t.Setenv("PULSE_MOCK_DOCKER_CONTAINERS", "9999")
+	t.Setenv("PULSE_MOCK_GENERIC_HOSTS", "9999")
+	t.Setenv("PULSE_MOCK_K8S_CLUSTERS", "9999")
+	t.Setenv("PULSE_MOCK_K8S_NODES", "9999")
+	t.Setenv("PULSE_MOCK_K8S_PODS", "99999")
+	t.Setenv("PULSE_MOCK_K8S_DEPLOYMENTS", "9999")
+	t.Setenv("PULSE_MOCK_STOPPED_PERCENT", "500")
+
+	cfg := LoadMockConfig()
+
+	if cfg.NodeCount != maxMockNodeCount {
+		t.Fatalf("NodeCount = %d", cfg.NodeCount)
+	}
+	if cfg.VMsPerNode != maxMockGuestsPerNode || cfg.LXCsPerNode != maxMockGuestsPerNode {
+		t.Fatalf("guest counts not clamped: %+v", cfg)
+	}
+	if cfg.DockerHostCount != maxMockDockerHostCount || cfg.DockerContainersPerHost != maxMockDockerContainersPerHost {
+		t.Fatalf("docker counts not clamped: %+v", cfg)
+	}
+	if cfg.GenericHostCount != maxMockGenericHostCount {
+		t.Fatalf("GenericHostCount = %d", cfg.GenericHostCount)
+	}
+	if cfg.K8sClusterCount != maxMockK8sClusterCount || cfg.K8sNodesPerCluster != maxMockK8sNodesPerCluster {
+		t.Fatalf("k8s cluster counts not clamped: %+v", cfg)
+	}
+	if cfg.K8sPodsPerCluster != maxMockK8sPodsPerCluster || cfg.K8sDeploymentsPerCluster != maxMockK8sDeploymentsPerCluster {
+		t.Fatalf("k8s workload counts not clamped: %+v", cfg)
+	}
+	if cfg.StoppedPercent != 1 {
+		t.Fatalf("StoppedPercent = %v", cfg.StoppedPercent)
+	}
+}

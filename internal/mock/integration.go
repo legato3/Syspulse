@@ -247,11 +247,12 @@ func LoadMockConfig() MockConfig {
 		}
 	}
 
-	return config
+	return normalizeMockConfig(config)
 }
 
 // SetMockConfig updates the mock configuration dynamically and regenerates data when enabled.
 func SetMockConfig(cfg MockConfig) {
+	cfg = normalizeMockConfig(cfg)
 	dataMu.Lock()
 	mockConfig = cfg
 	if enabled.Load() {

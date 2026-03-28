@@ -51,9 +51,18 @@ type MockConfig struct {
 }
 
 const (
-	dockerConnectionPrefix     = "docker-"
-	kubernetesConnectionPrefix = "kubernetes-"
-	hostConnectionPrefix       = "host-"
+	dockerConnectionPrefix          = "docker-"
+	kubernetesConnectionPrefix      = "kubernetes-"
+	hostConnectionPrefix            = "host-"
+	maxMockNodeCount                = 100
+	maxMockGuestsPerNode            = 250
+	maxMockDockerHostCount          = 100
+	maxMockDockerContainersPerHost  = 500
+	maxMockGenericHostCount         = 100
+	maxMockK8sClusterCount          = 50
+	maxMockK8sNodesPerCluster       = 200
+	maxMockK8sPodsPerCluster        = 2000
+	maxMockK8sDeploymentsPerCluster = 500
 )
 
 var DefaultConfig = MockConfig{
@@ -69,6 +78,36 @@ var DefaultConfig = MockConfig{
 	K8sDeploymentsPerCluster: 12,
 	RandomMetrics:            true,
 	StoppedPercent:           0.2,
+}
+
+func normalizeMockConfig(config MockConfig) MockConfig {
+	config.NodeCount = clampInt(config.NodeCount, 0, maxMockNodeCount)
+	config.VMsPerNode = clampInt(config.VMsPerNode, 0, maxMockGuestsPerNode)
+	config.LXCsPerNode = clampInt(config.LXCsPerNode, 0, maxMockGuestsPerNode)
+	config.DockerHostCount = clampInt(config.DockerHostCount, 0, maxMockDockerHostCount)
+	config.DockerContainersPerHost = clampInt(config.DockerContainersPerHost, 0, maxMockDockerContainersPerHost)
+	config.GenericHostCount = clampInt(config.GenericHostCount, 0, maxMockGenericHostCount)
+	config.K8sClusterCount = clampInt(config.K8sClusterCount, 0, maxMockK8sClusterCount)
+	config.K8sNodesPerCluster = clampInt(config.K8sNodesPerCluster, 0, maxMockK8sNodesPerCluster)
+	config.K8sPodsPerCluster = clampInt(config.K8sPodsPerCluster, 0, maxMockK8sPodsPerCluster)
+	config.K8sDeploymentsPerCluster = clampInt(config.K8sDeploymentsPerCluster, 0, maxMockK8sDeploymentsPerCluster)
+	if config.StoppedPercent < 0 {
+		config.StoppedPercent = 0
+	}
+	if config.StoppedPercent > 1 {
+		config.StoppedPercent = 1
+	}
+	return config
+}
+
+func clampInt(value, minValue, maxValue int) int {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 var appNames = []string{
@@ -330,6 +369,7 @@ func generateVirtualDisks() ([]models.Disk, models.Disk) {
 // GenerateMockData creates a simulated state snapshot for demo/test environments.
 func GenerateMockData(config MockConfig) models.StateSnapshot {
 	// rand is automatically seeded in Go 1.20+
+	config = normalizeMockConfig(config)
 
 	data := models.StateSnapshot{
 		Nodes:                     generateNodes(config),
