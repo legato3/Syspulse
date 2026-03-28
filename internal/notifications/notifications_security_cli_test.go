@@ -3,6 +3,7 @@ package notifications
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func TestSendAppriseViaCLIExecError(t *testing.T) {
 	nm := NewNotificationManager("")
 	defer nm.Stop()
 
-	nm.appriseExec = func(ctx context.Context, path string, args []string) ([]byte, error) {
+	nm.appriseExec = func(ctx context.Context, args []string) ([]byte, error) {
 		return []byte("boom"), errors.New("exec failed")
 	}
 
@@ -42,7 +43,7 @@ func TestSendAppriseViaCLISuccess(t *testing.T) {
 	nm := NewNotificationManager("")
 	defer nm.Stop()
 
-	nm.appriseExec = func(ctx context.Context, path string, args []string) ([]byte, error) {
+	nm.appriseExec = func(ctx context.Context, args []string) ([]byte, error) {
 		return []byte("ok"), nil
 	}
 
@@ -60,7 +61,7 @@ func TestSendAppriseViaCLISuccessNoOutput(t *testing.T) {
 	nm := NewNotificationManager("")
 	defer nm.Stop()
 
-	nm.appriseExec = func(ctx context.Context, path string, args []string) ([]byte, error) {
+	nm.appriseExec = func(ctx context.Context, args []string) ([]byte, error) {
 		return nil, nil
 	}
 
@@ -75,10 +76,14 @@ func TestSendAppriseViaCLISuccessNoOutput(t *testing.T) {
 }
 
 func TestDefaultAppriseExecRunsCommand(t *testing.T) {
+	if _, err := exec.LookPath("apprise"); err != nil {
+		t.Skip("apprise not installed")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if _, err := defaultAppriseExec(ctx, "true", nil); err != nil {
+	if _, err := defaultAppriseExec(ctx, []string{"--help"}); err != nil {
 		t.Fatalf("expected defaultAppriseExec to run, got %v", err)
 	}
 }

@@ -187,7 +187,7 @@ type NotificationManager struct {
 	allowedPrivateMu   sync.RWMutex       // Protects allowedPrivateNets
 }
 
-type appriseExecFunc func(ctx context.Context, path string, args []string) ([]byte, error)
+type appriseExecFunc func(ctx context.Context, args []string) ([]byte, error)
 
 // copyEmailConfig returns a defensive copy of EmailConfig including its slices to avoid data races.
 func copyEmailConfig(cfg EmailConfig) EmailConfig {
@@ -309,8 +309,8 @@ func NormalizeAppriseConfig(cfg AppriseConfig) AppriseConfig {
 	return normalized
 }
 
-func defaultAppriseExec(ctx context.Context, path string, args []string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, path, args...)
+func defaultAppriseExec(ctx context.Context, args []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "apprise", args...)
 	return cmd.CombinedOutput()
 }
 
@@ -1491,7 +1491,7 @@ func (n *NotificationManager) sendAppriseViaCLI(cfg AppriseConfig, title, body s
 		execFn = defaultAppriseExec
 	}
 
-	output, err := execFn(ctx, cfg.CLIPath, args)
+	output, err := execFn(ctx, args)
 	if err != nil {
 		if len(output) > 0 {
 			log.Debug().

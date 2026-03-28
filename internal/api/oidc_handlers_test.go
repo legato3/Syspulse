@@ -98,6 +98,16 @@ func TestSanitizeOIDCReturnTo(t *testing.T) {
 			raw:  "  /dashboard  ",
 			want: "/dashboard",
 		},
+		{
+			name: "invalid slash backslash",
+			raw:  "/\\evil",
+			want: "",
+		},
+		{
+			name: "invalid triple slash",
+			raw:  "///evil",
+			want: "",
+		},
 	}
 
 	for _, tc := range tests {

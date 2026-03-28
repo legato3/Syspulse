@@ -304,7 +304,7 @@ func (r *Router) handleOIDCCallback(w http.ResponseWriter, req *http.Request) {
 
 	LogAuditEventForTenant(GetOrgID(req.Context()), "oidc_login", username, GetClientIP(req), req.URL.Path, true, "OIDC login success")
 
-	target := entry.ReturnTo
+	target := sanitizeOIDCReturnTo(entry.ReturnTo)
 	if target == "" {
 		target = "/"
 	}
@@ -343,7 +343,14 @@ func sanitizeOIDCReturnTo(raw string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if !strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "//") {
+	if !strings.HasPrefix(trimmed, "/") {
+		return ""
+	}
+	if len(trimmed) > 1 && (trimmed[1] == '/' || trimmed[1] == '\\') {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" {
 		return ""
 	}
 	return trimmed

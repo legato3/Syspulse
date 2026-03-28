@@ -231,10 +231,7 @@ func TestSendGroupedAppriseInvokesExecutor(t *testing.T) {
 	done := make(chan struct{}, 1)
 	var capturedArgs []string
 
-	nm.appriseExec = func(ctx context.Context, path string, args []string) ([]byte, error) {
-		if path != "apprise" {
-			t.Fatalf("expected CLI path 'apprise', got %q", path)
-		}
+	nm.appriseExec = func(ctx context.Context, args []string) ([]byte, error) {
 		capturedArgs = append([]string(nil), args...)
 		select {
 		case done <- struct{}{}:
@@ -736,10 +733,7 @@ func TestSendTestNotificationApprise(t *testing.T) {
 	var once sync.Once
 	var capturedArgs []string
 
-	nm.appriseExec = func(ctx context.Context, path string, args []string) ([]byte, error) {
-		if path != "apprise" {
-			t.Fatalf("expected CLI path 'apprise', got %q", path)
-		}
+	nm.appriseExec = func(ctx context.Context, args []string) ([]byte, error) {
 		capturedArgs = append([]string(nil), args...)
 		// Use sync.Once to safely close channel even if callback is invoked multiple times
 		once.Do(func() { close(done) })
@@ -794,10 +788,7 @@ func TestSendTestAppriseWithConfig(t *testing.T) {
 
 	done := make(chan struct{})
 	var once sync.Once
-	var cliPath string
-
-	nm.appriseExec = func(ctx context.Context, path string, args []string) ([]byte, error) {
-		cliPath = path
+	nm.appriseExec = func(ctx context.Context, args []string) ([]byte, error) {
 		// Use sync.Once to safely close channel even if callback is invoked multiple times
 		once.Do(func() { close(done) })
 		return []byte("ok"), nil
@@ -818,9 +809,6 @@ func TestSendTestAppriseWithConfig(t *testing.T) {
 		t.Fatalf("timeout waiting for Apprise test execution")
 	}
 
-	if cliPath != "apprise" {
-		t.Fatalf("expected default CLI path 'apprise', got %q", cliPath)
-	}
 }
 
 func TestSendTestNotificationAppriseHTTP(t *testing.T) {

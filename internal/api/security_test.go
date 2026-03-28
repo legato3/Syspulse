@@ -775,13 +775,14 @@ func TestGetSessionUsername(t *testing.T) {
 
 func TestClearCSRFCookie(t *testing.T) {
 	t.Run("nil writer does not panic", func(t *testing.T) {
-		clearCSRFCookie(nil)
+		clearCSRFCookie(nil, nil)
 		// Should not panic
 	})
 
 	t.Run("sets cookie with maxage -1", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		clearCSRFCookie(w)
+		req := httptest.NewRequest("POST", "https://example.com/api/test", nil)
+		clearCSRFCookie(w, req)
 
 		cookies := w.Result().Cookies()
 		if len(cookies) != 1 {
@@ -797,6 +798,9 @@ func TestClearCSRFCookie(t *testing.T) {
 		}
 		if cookie.MaxAge != -1 {
 			t.Errorf("cookie MaxAge = %d, want -1", cookie.MaxAge)
+		}
+		if !cookie.Secure {
+			t.Errorf("cookie Secure = %v, want true for HTTPS requests", cookie.Secure)
 		}
 	})
 }

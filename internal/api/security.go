@@ -72,7 +72,7 @@ func CheckCSRF(w http.ResponseWriter, r *http.Request) bool {
 			Str("path", r.URL.Path).
 			Str("session", safePrefixForLog(cookie.Value, 8)+"...").
 			Msg("Missing CSRF token")
-		clearCSRFCookie(w)
+		clearCSRFCookie(w, r)
 		if newToken := issueNewCSRFCookie(w, r, cookie.Value); newToken != "" {
 			w.Header().Set("X-CSRF-Token", newToken)
 			log.Debug().Str("new_token", safePrefixForLog(newToken, 8)+"...").Msg("Issued new CSRF token after missing")
@@ -87,7 +87,7 @@ func CheckCSRF(w http.ResponseWriter, r *http.Request) bool {
 			Str("session", safePrefixForLog(cookie.Value, 8)+"...").
 			Str("provided_token", safePrefixForLog(csrfToken, 8)+"...").
 			Msg("Invalid CSRF token")
-		clearCSRFCookie(w)
+		clearCSRFCookie(w, r)
 		if newToken := issueNewCSRFCookie(w, r, cookie.Value); newToken != "" {
 			w.Header().Set("X-CSRF-Token", newToken)
 			log.Debug().Str("new_token", safePrefixForLog(newToken, 8)+"...").Msg("Issued new CSRF token after invalid")
@@ -102,16 +102,19 @@ func CheckCSRF(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func clearCSRFCookie(w http.ResponseWriter) {
+func clearCSRFCookie(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		return
 	}
+	secure, sameSite := getCookieSettings(r)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "pulse_csrf",
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: false,
+		Secure:   secure,
+		SameSite: sameSite,
 	})
 }
 
