@@ -1,6 +1,8 @@
 package servicediscovery
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -78,10 +80,31 @@ func NewStore(dataDir string) (*Store, error) {
 
 // getFilePath returns the file path for a resource ID.
 func (s *Store) getFilePath(id string) string {
-	// Sanitize ID for filename: replace : with _
+	return filepath.Join(s.dataDir, hashedStorageName(id)+".enc")
+}
+
+func (s *Store) getLegacyFilePath(id string) string {
+	// Legacy filename format kept for backward compatibility reads.
 	safeID := strings.ReplaceAll(id, ":", "_")
 	safeID = strings.ReplaceAll(safeID, "/", "_")
 	return filepath.Join(s.dataDir, safeID+".enc")
+}
+
+func hashedStorageName(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])
+}
+
+func resolveExistingPath(primaryPath, legacyPath string) string {
+	if _, err := os.Stat(primaryPath); err == nil {
+		return primaryPath
+	}
+	if legacyPath != "" {
+		if _, err := os.Stat(legacyPath); err == nil {
+			return legacyPath
+		}
+	}
+	return primaryPath
 }
 
 // Save persists a discovery to encrypted storage.
@@ -115,6 +138,7 @@ func (s *Store) Save(d *ResourceDiscovery) error {
 
 	// Write atomically using tmp file + rename
 	filePath := s.getFilePath(d.ID)
+	legacyPath := s.getLegacyFilePath(d.ID)
 	tmpPath := filePath + ".tmp"
 
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
@@ -124,6 +148,9 @@ func (s *Store) Save(d *ResourceDiscovery) error {
 	if err := os.Rename(tmpPath, filePath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to finalize discovery file: %w", err)
+	}
+	if legacyPath != filePath {
+		_ = os.Remove(legacyPath)
 	}
 
 	// Update cache
@@ -151,7 +178,7 @@ func (s *Store) Get(id string) (*ResourceDiscovery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filePath := s.getFilePath(id)
+	filePath := resolveExistingPath(s.getFilePath(id), s.getLegacyFilePath(id))
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -192,12 +219,20 @@ func (s *Store) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filePath := s.getFilePath(id)
-	if err := os.Remove(filePath); err != nil {
-		if os.IsNotExist(err) {
-			return nil // Already deleted
+	primaryPath := s.getFilePath(id)
+	legacyPath := s.getLegacyFilePath(id)
+	var removed bool
+	for _, filePath := range []string{primaryPath, legacyPath} {
+		if err := os.Remove(filePath); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("failed to delete discovery file: %w", err)
 		}
-		return fmt.Errorf("failed to delete discovery file: %w", err)
+		removed = true
+	}
+	if !removed {
+		return nil // Already deleted
 	}
 
 	// Remove from cache
@@ -342,7 +377,7 @@ func (s *Store) Exists(id string) bool {
 	}
 	s.mu.RUnlock()
 
-	filePath := s.getFilePath(id)
+	filePath := resolveExistingPath(s.getFilePath(id), s.getLegacyFilePath(id))
 	_, err := os.Stat(filePath)
 	return err == nil
 }
@@ -369,7 +404,10 @@ func (s *Store) NeedsRefresh(id string, maxAge time.Duration) bool {
 
 // getFingerprintFilePath returns the file path for a fingerprint.
 func (s *Store) getFingerprintFilePath(resourceID string) string {
-	// Sanitize ID for filename
+	return filepath.Join(s.fingerprintDir, hashedStorageName(resourceID)+".json")
+}
+
+func (s *Store) getLegacyFingerprintFilePath(resourceID string) string {
 	safeID := strings.ReplaceAll(resourceID, ":", "_")
 	safeID = strings.ReplaceAll(safeID, "/", "_")
 	return filepath.Join(s.fingerprintDir, safeID+".json")
@@ -430,6 +468,7 @@ func (s *Store) SaveFingerprint(fp *ContainerFingerprint) error {
 	}
 
 	filePath := s.getFingerprintFilePath(fp.ResourceID)
+	legacyPath := s.getLegacyFingerprintFilePath(fp.ResourceID)
 	tmpPath := filePath + ".tmp"
 
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
@@ -439,6 +478,9 @@ func (s *Store) SaveFingerprint(fp *ContainerFingerprint) error {
 	if err := os.Rename(tmpPath, filePath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to finalize fingerprint file: %w", err)
+	}
+	if legacyPath != filePath {
+		_ = os.Remove(legacyPath)
 	}
 
 	return nil
@@ -555,9 +597,16 @@ func (s *Store) CleanupOrphanedFingerprints(currentResourceIDs map[string]bool) 
 			delete(s.fingerprints, fpID)
 
 			// Remove from disk
-			filePath := s.getFingerprintFilePath(fpID)
-			if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-				log.Warn().Err(err).Str("id", fpID).Msg("Failed to remove orphaned fingerprint file")
+			primaryPath := s.getFingerprintFilePath(fpID)
+			legacyPath := s.getLegacyFingerprintFilePath(fpID)
+			var removeErr error
+			for _, filePath := range []string{primaryPath, legacyPath} {
+				if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+					removeErr = err
+				}
+			}
+			if removeErr != nil {
+				log.Warn().Err(removeErr).Str("id", fpID).Msg("Failed to remove orphaned fingerprint file")
 			} else {
 				log.Debug().Str("id", fpID).Msg("Removed orphaned fingerprint")
 			}
@@ -585,14 +634,29 @@ func (s *Store) CleanupOrphanedDiscoveries(currentResourceIDs map[string]bool) i
 			continue
 		}
 
-		// Convert filename back to resource ID
-		// Filename format: type_host_id.enc (underscores replace colons and slashes)
-		baseName := strings.TrimSuffix(entry.Name(), ".enc")
-		resourceID := filenameToResourceID(baseName)
+		discoveryPath := filepath.Join(s.dataDir, entry.Name())
+		data, err := os.ReadFile(discoveryPath)
+		if err != nil {
+			log.Warn().Err(err).Str("file", entry.Name()).Msg("Failed to read discovery file during cleanup")
+			continue
+		}
+		if s.crypto != nil {
+			decrypted, err := s.crypto.Decrypt(data)
+			if err != nil {
+				log.Warn().Err(err).Str("file", entry.Name()).Msg("Failed to decrypt discovery during cleanup")
+				continue
+			}
+			data = decrypted
+		}
+		var discovery ResourceDiscovery
+		if err := json.Unmarshal(data, &discovery); err != nil {
+			log.Warn().Err(err).Str("file", entry.Name()).Msg("Failed to unmarshal discovery during cleanup")
+			continue
+		}
+		resourceID := discovery.ID
 
 		if !currentResourceIDs[resourceID] {
-			filePath := filepath.Join(s.dataDir, entry.Name())
-			if err := os.Remove(filePath); err != nil {
+			if err := os.Remove(discoveryPath); err != nil {
 				log.Warn().Err(err).Str("file", entry.Name()).Msg("Failed to remove orphaned discovery file")
 			} else {
 				log.Debug().Str("id", resourceID).Msg("Removed orphaned discovery")
@@ -604,46 +668,16 @@ func (s *Store) CleanupOrphanedDiscoveries(currentResourceIDs map[string]bool) i
 	return removed
 }
 
-// filenameToResourceID converts a discovery filename back to a resource ID.
-// Reverses the transformation done in getFilePath.
-func filenameToResourceID(filename string) string {
-	// The filename uses underscores for colons and slashes
-	// We need to be smart about this - the format is type_host_resourceid
-	// First underscore separates type, rest could have underscores in host/resource names
-
-	parts := strings.SplitN(filename, "_", 3)
-	if len(parts) < 3 {
-		return filename // Can't parse, return as-is
-	}
-
-	resourceType := parts[0]
-	host := parts[1]
-	resourceID := parts[2]
-
-	// For k8s, the resource ID might have been namespace/name which became namespace_name
-	// We convert back: k8s:cluster:namespace/name
-	if resourceType == "k8s" && strings.Contains(resourceID, "_") {
-		// Could be namespace_name, convert back to namespace/name
-		resourceID = strings.Replace(resourceID, "_", "/", 1)
-	}
-
-	return resourceType + ":" + host + ":" + resourceID
-}
-
 // ListDiscoveryIDs returns all discovery IDs currently stored.
 func (s *Store) ListDiscoveryIDs() []string {
-	entries, err := os.ReadDir(s.dataDir)
+	discoveries, err := s.List()
 	if err != nil {
 		return nil
 	}
 
-	var ids []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".enc") {
-			continue
-		}
-		baseName := strings.TrimSuffix(entry.Name(), ".enc")
-		ids = append(ids, filenameToResourceID(baseName))
+	ids := make([]string, 0, len(discoveries))
+	for _, discovery := range discoveries {
+		ids = append(ids, discovery.ID)
 	}
 	return ids
 }

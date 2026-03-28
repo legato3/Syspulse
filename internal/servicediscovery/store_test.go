@@ -144,8 +144,11 @@ func TestStore_CryptoRoundTripAndPaths(t *testing.T) {
 
 	path := store.getFilePath(id)
 	base := filepath.Base(path)
-	if strings.Contains(base, ":") || strings.Contains(base, "/") {
+	if strings.Contains(base, ":") || strings.Contains(base, "/") || strings.Contains(base, "..") {
 		t.Fatalf("expected sanitized base filename, got %s", base)
+	}
+	if path != filepath.Join(store.dataDir, hashedStorageName(id)+".enc") {
+		t.Fatalf("expected hashed path, got %s", path)
 	}
 
 	loaded, err := store.Get(id)
@@ -163,6 +166,103 @@ func TestStore_CryptoRoundTripAndPaths(t *testing.T) {
 	list, err := store.List()
 	if err != nil || len(list) != 1 {
 		t.Fatalf("List with decrypt error: %v len=%d", err, len(list))
+	}
+}
+
+func TestStore_LegacyPathsRemainReadable(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore error: %v", err)
+	}
+	store.crypto = nil
+
+	id := "docker:host1:app/name"
+	discovery := &ResourceDiscovery{
+		ID:           id,
+		ResourceType: ResourceTypeDocker,
+		ResourceID:   "app/name",
+		HostID:       "host1",
+		ServiceName:  "LegacyApp",
+	}
+	raw, err := json.Marshal(discovery)
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+	legacyDiscoveryPath := store.getLegacyFilePath(id)
+	if err := os.WriteFile(legacyDiscoveryPath, raw, 0600); err != nil {
+		t.Fatalf("WriteFile legacy discovery error: %v", err)
+	}
+
+	got, err := store.Get(id)
+	if err != nil {
+		t.Fatalf("Get legacy error: %v", err)
+	}
+	if got == nil || got.ServiceName != "LegacyApp" {
+		t.Fatalf("unexpected legacy discovery: %#v", got)
+	}
+	if !store.Exists(id) {
+		t.Fatal("expected legacy discovery to exist")
+	}
+
+	fp := &ContainerFingerprint{ResourceID: id, HostID: "host1", Hash: "legacyhash"}
+	fpRaw, err := json.Marshal(fp)
+	if err != nil {
+		t.Fatalf("Marshal fingerprint error: %v", err)
+	}
+	legacyFingerprintPath := store.getLegacyFingerprintFilePath(id)
+	if err := os.WriteFile(legacyFingerprintPath, fpRaw, 0600); err != nil {
+		t.Fatalf("WriteFile legacy fingerprint error: %v", err)
+	}
+
+	store.fingerprints = make(map[string]*ContainerFingerprint)
+	store.loadFingerprints()
+	loadedFP, err := store.GetFingerprint(id)
+	if err != nil {
+		t.Fatalf("GetFingerprint legacy error: %v", err)
+	}
+	if loadedFP == nil || loadedFP.Hash != "legacyhash" {
+		t.Fatalf("unexpected legacy fingerprint: %#v", loadedFP)
+	}
+}
+
+func TestStore_PathTraversalIDsStayWithinStore(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore error: %v", err)
+	}
+	store.crypto = nil
+
+	discovery := &ResourceDiscovery{
+		ID:           "..",
+		ResourceType: ResourceTypeHost,
+		ResourceID:   "..",
+		HostID:       "host1",
+		ServiceName:  "Traversal",
+	}
+	if err := store.Save(discovery); err != nil {
+		t.Fatalf("Save traversal discovery error: %v", err)
+	}
+
+	discoveryPath := store.getFilePath(discovery.ID)
+	relDiscovery, err := filepath.Rel(store.dataDir, discoveryPath)
+	if err != nil {
+		t.Fatalf("Rel discovery error: %v", err)
+	}
+	if strings.HasPrefix(relDiscovery, "..") {
+		t.Fatalf("discovery path escaped store: %s", discoveryPath)
+	}
+
+	fp := &ContainerFingerprint{ResourceID: "..", HostID: "host1", Hash: "hash"}
+	if err := store.SaveFingerprint(fp); err != nil {
+		t.Fatalf("Save traversal fingerprint error: %v", err)
+	}
+	fingerprintPath := store.getFingerprintFilePath(fp.ResourceID)
+	relFingerprint, err := filepath.Rel(store.fingerprintDir, fingerprintPath)
+	if err != nil {
+		t.Fatalf("Rel fingerprint error: %v", err)
+	}
+	if strings.HasPrefix(relFingerprint, "..") {
+		t.Fatalf("fingerprint path escaped store: %s", fingerprintPath)
 	}
 }
 
