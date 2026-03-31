@@ -627,14 +627,28 @@ func (p *ProxmoxSetup) getHostURL(ptype string) string {
 		return fmt.Sprintf("https://%s:%s", p.reportIP, port)
 	}
 
-	// Priority 2: Try to determine which local IP is used to connect to Pulse
-	// This ensures we pick an IP that can actually communicate with the Pulse server
+	// Priority 2: Prefer the system hostname when it resolves to a non-loopback address.
+	// This preserves admin-managed DNS names and matching TLS certificates instead of
+	// silently downgrading to an inferred IP address, which can pick the wrong interface
+	// on multi-NIC Proxmox hosts and break internal-CA deployments.
+	if hostname := strings.TrimSpace(p.hostname); hostname != "" {
+		if hostnameIP := p.getIPForHostname(); hostnameIP != "" && !isLoopbackOrLinkLocalIP(hostnameIP) {
+			p.logger.Debug().
+				Str("hostname", hostname).
+				Str("ip", hostnameIP).
+				Msg("Using resolvable hostname for Proxmox registration")
+			return fmt.Sprintf("https://%s:%s", hostname, port)
+		}
+	}
+
+	// Priority 3: Try to determine which local IP is used to connect to Pulse.
+	// This remains a fallback for environments without usable hostname resolution.
 	if reachableIP := p.getIPThatReachesPulse(); reachableIP != "" {
 		p.logger.Debug().Str("ip", reachableIP).Msg("Using IP that can reach Pulse server")
 		return fmt.Sprintf("https://%s:%s", reachableIP, port)
 	}
 
-	// Fallback: Get all IPs and select the best one based on heuristics
+	// Priority 4: Get all IPs and select the best one based on heuristics.
 	if out, err := p.collector.CommandCombinedOutput(context.Background(), "hostname", "-I"); err == nil {
 		ips := strings.Fields(out)
 		if len(ips) > 0 {
@@ -732,6 +746,14 @@ func (p *ProxmoxSetup) getIPForHostname() string {
 		}
 	}
 	return ""
+}
+
+func isLoopbackOrLinkLocalIP(raw string) bool {
+	ip := net.ParseIP(strings.TrimSpace(raw))
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 // selectBestIP picks the most likely externally-reachable IP from a list.
