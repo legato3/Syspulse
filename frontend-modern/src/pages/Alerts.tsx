@@ -486,9 +486,12 @@ export const extractTriggerValues = (
 export const normalizeRawOverrideConfigKeys = (
   rawOverrides: Record<string, RawOverrideConfig>,
   storage: Storage[] = [],
+  guests: Array<Pick<VM, 'id' | 'instance' | 'node' | 'vmid'> | Pick<Container, 'id' | 'instance' | 'node' | 'vmid'>> = [],
 ): Record<string, RawOverrideConfig> => {
   const normalized: Record<string, RawOverrideConfig> = {};
   const sharedStorageLegacyKeyMap = new Map<string, string>();
+  const guestLegacyKeyMap = new Map<string, string>();
+  const guestLegacyMatchers: Array<{ canonicalID: string; instance: string; vmid: number }> = [];
 
   storage.forEach((entry) => {
     if (!entry.shared || !entry.id || !entry.name) {
@@ -502,6 +505,21 @@ export const normalizeRawOverrideConfigKeys = (
       }
       sharedStorageLegacyKeyMap.set(`${trimmedNodeID}-${entry.name}`, entry.id);
     });
+  });
+
+  guests.forEach((guest) => {
+    const instance = guest.instance?.trim() || guest.node?.trim() || '';
+    const node = guest.node?.trim() || '';
+    const canonicalID = guest.id || `${instance}:${node}:${guest.vmid}`;
+    if (!instance || !node || !guest.vmid || !canonicalID) {
+      return;
+    }
+
+    guestLegacyKeyMap.set(`${instance}-${guest.vmid}`, canonicalID);
+    if (instance !== node) {
+      guestLegacyKeyMap.set(`${instance}-${node}-${guest.vmid}`, canonicalID);
+      guestLegacyMatchers.push({ canonicalID, instance, vmid: guest.vmid });
+    }
   });
 
   for (const [rawKey, value] of Object.entries(rawOverrides || {})) {
@@ -520,6 +538,18 @@ export const normalizeRawOverrideConfigKeys = (
     const sharedStorageKey = sharedStorageLegacyKeyMap.get(key);
     if (sharedStorageKey) {
       key = sharedStorageKey;
+    }
+
+    const guestKey = guestLegacyKeyMap.get(key);
+    if (guestKey) {
+      key = guestKey;
+    } else {
+      const matchedGuest = guestLegacyMatchers.find(({ instance, vmid }) =>
+        key.startsWith(`${instance}-`) && key.endsWith(`-${vmid}`),
+      );
+      if (matchedGuest) {
+        key = matchedGuest.canonicalID;
+      }
     }
 
     normalized[key] = value;
@@ -689,7 +719,11 @@ export function Alerts() {
 
   createEffect(() => {
     const currentRawOverrides = rawOverridesConfig();
-    const normalized = normalizeRawOverrideConfigKeys(currentRawOverrides, state.storage || []);
+    const normalized = normalizeRawOverrideConfigKeys(
+      currentRawOverrides,
+      state.storage || [],
+      [...(state.vms || []), ...(state.containers || [])],
+    );
     if (JSON.stringify(normalized) !== JSON.stringify(currentRawOverrides)) {
       setRawOverridesConfig(normalized);
     }
@@ -1304,7 +1338,13 @@ export function Alerts() {
       setDisableAllPMGOffline(config.disableAllPMGOffline ?? false);
       setDisableAllDockerHostsOffline(config.disableAllDockerHostsOffline ?? false);
 
-      setRawOverridesConfig(normalizeRawOverrideConfigKeys(config.overrides || {}, state.storage || []));
+      setRawOverridesConfig(
+        normalizeRawOverrideConfigKeys(
+          config.overrides || {},
+          state.storage || [],
+          [...(state.vms || []), ...(state.containers || [])],
+        ),
+      );
 
       if (config.schedule) {
         if (config.schedule.quietHours) {

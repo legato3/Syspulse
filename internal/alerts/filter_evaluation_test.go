@@ -1544,8 +1544,8 @@ func TestGetGuestThresholds(t *testing.T) {
 			VMID:     100,
 		}
 
-		// Query with new format
-		result := m.getGuestThresholds(vm, "pve1-100")
+		// Query with the current canonical format
+		result := m.getGuestThresholds(vm, BuildGuestKey("pve1", "node1", 100))
 
 		if result.CPU == nil {
 			t.Fatal("CPU threshold should not be nil after legacy migration")
@@ -1554,9 +1554,9 @@ func TestGetGuestThresholds(t *testing.T) {
 			t.Errorf("expected CPU trigger 60 from migrated legacy override, got %v", result.CPU.Trigger)
 		}
 
-		// Verify the override was migrated to new ID
+		// Verify the override was migrated to the stable clustered key
 		if _, exists := m.config.Overrides["pve1-100"]; !exists {
-			t.Error("override should be migrated to new ID format")
+			t.Error("override should be migrated to stable clustered key")
 		}
 		if _, exists := m.config.Overrides["pve1-node1-100"]; exists {
 			t.Error("old legacy override should be removed after migration")
@@ -1626,11 +1626,50 @@ func TestGetGuestThresholds(t *testing.T) {
 			t.Errorf("expected CPU trigger 65 from migrated cluster legacy override, got %v", result.CPU.Trigger)
 		}
 
-		if _, exists := m.config.Overrides[canonicalID]; !exists {
-			t.Error("override should be migrated to canonical guest ID")
+		if _, exists := m.config.Overrides["pve1-100"]; !exists {
+			t.Error("stable clustered guest override should remain on instance-vmid key")
 		}
-		if _, exists := m.config.Overrides["pve1-100"]; exists {
-			t.Error("old cluster legacy override should be removed after migration")
+		if _, exists := m.config.Overrides[canonicalID]; exists {
+			t.Error("clustered guest override should not be migrated onto a node-bound canonical key")
+		}
+	})
+
+	t.Run("migrates clustered canonical override to stable key across node moves", func(t *testing.T) {
+		oldCanonicalID := BuildGuestKey("pve1", "node1", 100)
+		currentCanonicalID := BuildGuestKey("pve1", "node2", 100)
+		m := &Manager{
+			config: AlertConfig{
+				GuestDefaults: ThresholdConfig{},
+				Overrides: map[string]ThresholdConfig{
+					oldCanonicalID: {
+						Memory: &HysteresisThreshold{Trigger: 92, Clear: 87},
+					},
+				},
+				CustomRules: []CustomAlertRule{},
+			},
+		}
+
+		vm := models.VM{
+			Name:     "test-vm",
+			Node:     "node2",
+			Instance: "pve1",
+			VMID:     100,
+		}
+
+		result := m.getGuestThresholds(vm, currentCanonicalID)
+
+		if result.Memory == nil {
+			t.Fatal("Memory threshold should not be nil after clustered canonical migration")
+		}
+		if result.Memory.Trigger != 92 {
+			t.Errorf("expected Memory trigger 92 from migrated clustered canonical override, got %v", result.Memory.Trigger)
+		}
+
+		if _, exists := m.config.Overrides["pve1-100"]; !exists {
+			t.Error("override should be migrated to stable clustered key")
+		}
+		if _, exists := m.config.Overrides[oldCanonicalID]; exists {
+			t.Error("old node-bound canonical override should be removed after migration")
 		}
 	})
 

@@ -1553,7 +1553,14 @@ func normalizeOverrides(overrides map[string]ThresholdConfig) {
 		if override.Usage != nil {
 			override.Usage = ensureHysteresisThreshold(override.Usage)
 		}
-		overrides[id] = override
+		normalizedKey := id
+		if ident, ok := parseCanonicalGuestKey(id); ok && ident.instance != ident.node {
+			normalizedKey = stableGuestOverrideKey(ident.instance, ident.node, ident.vmid)
+		}
+		if normalizedKey != id {
+			delete(overrides, id)
+		}
+		overrides[normalizedKey] = override
 	}
 }
 
@@ -1892,7 +1899,7 @@ func (m *Manager) reevaluateActiveAlertsLocked() {
 			// The next poll cycle will properly evaluate them with custom rules.
 
 			// Check if there's an override for this specific guest
-			if override, exists := m.config.Overrides[resourceID]; exists {
+			if override, exists := m.lookupGuestOverride(nil, resourceID); exists {
 				if override.Disabled {
 					// Alert is now disabled for this resource, resolve it
 					alertsToResolve = append(alertsToResolve, alertID)
@@ -8874,7 +8881,7 @@ func (m *Manager) checkGuestPoweredOff(guestID, name, node, instanceName, guestT
 
 	// Get thresholds to check if powered-off alerts are disabled
 	var thresholds ThresholdConfig
-	if override, exists := m.config.Overrides[guestID]; exists {
+	if override, exists := m.lookupGuestOverride(nil, guestID); exists {
 		thresholds = override
 	} else {
 		thresholds = m.config.GuestDefaults

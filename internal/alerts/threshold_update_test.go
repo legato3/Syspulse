@@ -329,3 +329,51 @@ func TestReevaluateActiveAlertsGuestNotMisclassifiedAsNode(t *testing.T) {
 		t.Errorf("Guest alert should have been resolved when guest memory threshold is disabled, but it was misclassified as a node alert")
 	}
 }
+
+func TestReevaluateActiveAlertsGuestUsesStableClusterOverrideAcrossNodeMove(t *testing.T) {
+	manager := NewManager()
+
+	manager.mu.Lock()
+	manager.activeAlerts = make(map[string]*Alert)
+	manager.mu.Unlock()
+
+	currentResourceID := BuildGuestKey("pve1", "node2", 101)
+	alertID := currentResourceID + "-memory"
+
+	config := AlertConfig{
+		Enabled: true,
+		GuestDefaults: ThresholdConfig{
+			Memory: &HysteresisThreshold{Trigger: 85, Clear: 80},
+		},
+		NodeDefaults:    ThresholdConfig{},
+		StorageDefault:  HysteresisThreshold{Trigger: 85, Clear: 80},
+		Overrides:       map[string]ThresholdConfig{"pve1-101": {Memory: &HysteresisThreshold{Trigger: 95, Clear: 90}}},
+	}
+	manager.UpdateConfig(config)
+
+	manager.mu.Lock()
+	manager.activeAlerts[alertID] = &Alert{
+		ID:         alertID,
+		Type:       "memory",
+		Level:      AlertLevelWarning,
+		ResourceID: currentResourceID,
+		Node:       "node2",
+		Instance:   "pve1",
+		Value:      88,
+		Threshold:  85,
+		StartTime:  time.Now().Add(-5 * time.Minute),
+		LastSeen:   time.Now(),
+	}
+	manager.mu.Unlock()
+
+	manager.UpdateConfig(config)
+	time.Sleep(100 * time.Millisecond)
+
+	manager.mu.RLock()
+	_, exists := manager.activeAlerts[alertID]
+	manager.mu.RUnlock()
+
+	if exists {
+		t.Fatalf("expected guest alert to be resolved when stable clustered override threshold is above current value")
+	}
+}

@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/rcourtman/pulse-go-rewrite/internal/models"
@@ -188,6 +189,152 @@ func (m *Manager) evaluateFilterStack(guest interface{}, stack FilterStack) bool
 	return false
 }
 
+type guestOverrideIdentity struct {
+	instance string
+	node     string
+	vmid     int
+}
+
+func stableGuestOverrideKey(instance, node string, vmid int) string {
+	instance = strings.TrimSpace(instance)
+	node = strings.TrimSpace(node)
+	if instance == "" {
+		instance = node
+	}
+	return fmt.Sprintf("%s-%d", instance, vmid)
+}
+
+func parseCanonicalGuestKey(guestID string) (guestOverrideIdentity, bool) {
+	parts := strings.Split(strings.TrimSpace(guestID), ":")
+	if len(parts) != 3 {
+		return guestOverrideIdentity{}, false
+	}
+
+	vmid, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return guestOverrideIdentity{}, false
+	}
+
+	instance := strings.TrimSpace(parts[0])
+	node := strings.TrimSpace(parts[1])
+	if instance == "" {
+		instance = node
+	}
+	if instance == "" || node == "" {
+		return guestOverrideIdentity{}, false
+	}
+
+	return guestOverrideIdentity{
+		instance: instance,
+		node:     node,
+		vmid:     vmid,
+	}, true
+}
+
+func guestOverrideIdentityFromGuestOrID(guest interface{}, guestID string) (guestOverrideIdentity, bool) {
+	switch g := guest.(type) {
+	case models.VM:
+		instance := strings.TrimSpace(g.Instance)
+		node := strings.TrimSpace(g.Node)
+		if instance == "" {
+			instance = node
+		}
+		if instance == "" || node == "" || g.VMID <= 0 {
+			return guestOverrideIdentity{}, false
+		}
+		return guestOverrideIdentity{
+			instance: instance,
+			node:     node,
+			vmid:     g.VMID,
+		}, true
+	case models.Container:
+		instance := strings.TrimSpace(g.Instance)
+		node := strings.TrimSpace(g.Node)
+		if instance == "" {
+			instance = node
+		}
+		if instance == "" || node == "" || g.VMID <= 0 {
+			return guestOverrideIdentity{}, false
+		}
+		return guestOverrideIdentity{
+			instance: instance,
+			node:     node,
+			vmid:     g.VMID,
+		}, true
+	default:
+		return parseCanonicalGuestKey(guestID)
+	}
+}
+
+func isCanonicalGuestOverrideKey(key string, ident guestOverrideIdentity) bool {
+	parsed, ok := parseCanonicalGuestKey(key)
+	if !ok {
+		return false
+	}
+	return parsed.instance == ident.instance && parsed.vmid == ident.vmid
+}
+
+func (m *Manager) lookupGuestOverride(guest interface{}, guestID string) (ThresholdConfig, bool) {
+	if guestID = strings.TrimSpace(guestID); guestID != "" {
+		if override, exists := m.config.Overrides[guestID]; exists {
+			ident, ok := guestOverrideIdentityFromGuestOrID(guest, guestID)
+			if !ok || ident.instance == ident.node {
+				return override, true
+			}
+
+			stableKey := stableGuestOverrideKey(ident.instance, ident.node, ident.vmid)
+			if guestID != stableKey {
+				// Cluster guest overrides should live under the stable instance-vmid key so
+				// they survive node moves. Preserve the override in-memory immediately.
+				m.config.Overrides[stableKey] = override
+				delete(m.config.Overrides, guestID)
+			}
+			return override, true
+		}
+	}
+
+	ident, ok := guestOverrideIdentityFromGuestOrID(guest, guestID)
+	if !ok {
+		return ThresholdConfig{}, false
+	}
+
+	stableKey := stableGuestOverrideKey(ident.instance, ident.node, ident.vmid)
+	if override, exists := m.config.Overrides[stableKey]; exists {
+		return override, true
+	}
+
+	if ident.instance != ident.node {
+		legacyKey := fmt.Sprintf("%s-%s-%d", ident.instance, ident.node, ident.vmid)
+		if legacyOverride, legacyExists := m.config.Overrides[legacyKey]; legacyExists {
+			log.Info().
+				Str("legacyID", legacyKey).
+				Str("newID", stableKey).
+				Msg("Migrating guest override from legacy cluster-node ID format")
+
+			m.config.Overrides[stableKey] = legacyOverride
+			delete(m.config.Overrides, legacyKey)
+			return legacyOverride, true
+		}
+
+		for key, override := range m.config.Overrides {
+			if !isCanonicalGuestOverrideKey(key, ident) {
+				continue
+			}
+			m.config.Overrides[stableKey] = override
+			delete(m.config.Overrides, key)
+
+			log.Info().
+				Str("legacyID", key).
+				Str("newID", stableKey).
+				Msg("Migrating clustered guest override from node-bound canonical key to stable key")
+
+			return override, true
+		}
+	}
+
+	return ThresholdConfig{}, false
+}
+
 // getGuestThresholds returns the appropriate thresholds for a guest
 // Priority: Guest-specific overrides > Custom rules (by priority) > Global defaults
 func (m *Manager) getGuestThresholds(guest interface{}, guestID string) ThresholdConfig {
@@ -267,14 +414,10 @@ func (m *Manager) getGuestThresholds(guest interface{}, guestID string) Threshol
 			Msg("Applied custom alert rule")
 	}
 
-	// Finally check guest-specific overrides (highest priority)
-	// First try the current canonical ID format (instance:node:vmid)
-	override, exists := m.config.Overrides[guestID]
-
-	// If not found, try legacy ID formats for migration
-	if !exists {
-		override, exists = m.tryLegacyOverrideMigration(guest, guestID)
-	}
+	// Finally check guest-specific overrides (highest priority).
+	// Cluster guest overrides should resolve via a stable instance-vmid key so they
+	// continue to apply after node moves. Older node-bound formats are migrated lazily.
+	override, exists := m.lookupGuestOverride(guest, guestID)
 
 	if exists {
 		// Apply the disabled flag if set

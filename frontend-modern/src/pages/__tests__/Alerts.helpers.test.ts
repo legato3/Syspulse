@@ -227,4 +227,38 @@ describe('threshold helper utilities', () => {
       },
     });
   });
+
+  it('maps stable clustered guest override keys onto the current canonical guest id', () => {
+    expect(normalizeRawOverrideConfigKeys({
+      'Main-101': {
+        cpu: { trigger: 95, clear: 90 },
+      },
+    }, [], [{
+      id: 'Main:node2:101',
+      instance: 'Main',
+      node: 'node2',
+      vmid: 101,
+    } as any])).toEqual({
+      'Main:node2:101': {
+        cpu: { trigger: 95, clear: 90 },
+      },
+    });
+  });
+
+  it('maps legacy clustered instance-node-vmid guest override keys onto the current canonical guest id', () => {
+    expect(normalizeRawOverrideConfigKeys({
+      'Main-node1-101': {
+        memory: { trigger: 96, clear: 91 },
+      },
+    }, [], [{
+      id: 'Main:node2:101',
+      instance: 'Main',
+      node: 'node2',
+      vmid: 101,
+    } as any])).toEqual({
+      'Main:node2:101': {
+        memory: { trigger: 96, clear: 91 },
+      },
+    });
+  });
 });
