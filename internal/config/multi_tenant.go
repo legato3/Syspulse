@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/rcourtman/pulse-go-rewrite/internal/models"
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rs/zerolog/log"
 )
 
@@ -20,6 +21,9 @@ type MultiTenantPersistence struct {
 
 // NewMultiTenantPersistence creates a new multi-tenant persistence manager.
 func NewMultiTenantPersistence(baseDataDir string) *MultiTenantPersistence {
+	if normalized, err := pathutil.NormalizeDir(baseDataDir); err == nil {
+		baseDataDir = normalized
+	}
 	return &MultiTenantPersistence{
 		baseDataDir: baseDataDir,
 		tenants:     make(map[string]*ConfigPersistence),
@@ -50,16 +54,9 @@ func (mtp *MultiTenantPersistence) GetPersistence(orgID string) (*ConfigPersiste
 		return nil, fmt.Errorf("invalid organization ID: %s", orgID)
 	}
 
-	// Determine org data directory
-	// Global/Default org uses the root data dir (legacy compatibility)
-	// New orgs use /data/orgs/<org-id>
-	var orgDir string
-	if orgID == "default" {
-		// IMPORTANT: Default org uses root data dir for backward compatibility
-		// This ensures existing users' configs (nodes.enc, ai.enc, etc.) continue to work
-		orgDir = mtp.baseDataDir
-	} else {
-		orgDir = filepath.Join(mtp.baseDataDir, "orgs", orgID)
+	orgDir, err := mtp.orgDir(orgID)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Info().Str("org_id", orgID).Str("dir", orgDir).Msg("Initializing tenant persistence")
@@ -89,9 +86,23 @@ func (mtp *MultiTenantPersistence) OrgExists(orgID string) bool {
 		return false
 	}
 
-	orgDir := filepath.Join(mtp.baseDataDir, "orgs", orgID)
+	orgDir, err := mtp.orgDir(orgID)
+	if err != nil {
+		return false
+	}
 	stat, err := os.Stat(orgDir)
 	return err == nil && stat.IsDir()
+}
+
+func (mtp *MultiTenantPersistence) orgDir(orgID string) (string, error) {
+	if orgID == "default" {
+		return mtp.baseDataDir, nil
+	}
+	orgsRoot, err := pathutil.JoinBaseFile(mtp.baseDataDir, "orgs")
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve org root: %w", err)
+	}
+	return pathutil.JoinBaseFile(orgsRoot, orgID)
 }
 
 // LoadOrganization loads the organization metadata including members.

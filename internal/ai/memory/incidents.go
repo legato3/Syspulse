@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -126,7 +125,11 @@ func NewIncidentStore(cfg IncidentStoreConfig) *IncidentStore {
 			store.dataDir = ""
 		} else {
 			store.dataDir = normalizedDataDir
-			store.filePath = filepath.Join(store.dataDir, incidentFileName)
+			if filePath, pathErr := pathutil.JoinBaseFile(store.dataDir, incidentFileName); pathErr != nil {
+				log.Warn().Err(pathErr).Str("dataDir", store.dataDir).Msg("Failed to build incident store file path")
+			} else {
+				store.filePath = filePath
+			}
 		}
 		if store.filePath != "" {
 			if err := store.loadFromDisk(); err != nil {

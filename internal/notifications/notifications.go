@@ -1536,12 +1536,23 @@ func (n *NotificationManager) sendAppriseViaHTTP(cfg AppriseConfig, title, body,
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSeconds)*time.Second)
 	defer cancel()
 
+	validatedBaseURL, err := n.validatedWebhookRequestURL(serverURL)
+	if err != nil {
+		return fmt.Errorf("apprise server URL validation failed: %w", err)
+	}
+
 	notifyEndpoint := "/notify"
 	if cfg.ConfigKey != "" {
 		notifyEndpoint = "/notify/" + url.PathEscape(cfg.ConfigKey)
 	}
 
-	requestURL := strings.TrimRight(serverURL, "/") + notifyEndpoint
+	requestURL := *validatedBaseURL
+	if requestURL.Path == "" || requestURL.Path == "/" {
+		requestURL.Path = notifyEndpoint
+	} else {
+		requestURL.Path = strings.TrimRight(requestURL.Path, "/") + notifyEndpoint
+	}
+	requestURL.Fragment = ""
 
 	payload := map[string]any{
 		"body":  body,
@@ -1559,7 +1570,7 @@ func (n *NotificationManager) sendAppriseViaHTTP(cfg AppriseConfig, title, body,
 		return fmt.Errorf("failed to marshal Apprise payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), bytes.NewReader(payloadBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create Apprise request: %w", err)
 	}

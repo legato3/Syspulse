@@ -54,14 +54,31 @@ func NewHistoryManager(dataDir string) *HistoryManager {
 	normalizedDataDir, err := pathutil.NormalizeDir(dataDir)
 	if err != nil {
 		log.Error().Err(err).Str("dir", dataDir).Msg("Invalid alert history data directory")
-		normalizedDataDir = filepath.Clean(dataDir)
+		fallbackDir, fallbackErr := pathutil.NormalizeDir(utils.GetDataDir())
+		if fallbackErr != nil {
+			log.Error().Err(fallbackErr).Msg("Failed to normalize fallback alert history data directory")
+			normalizedDataDir = filepath.Clean(utils.GetDataDir())
+		} else {
+			normalizedDataDir = fallbackDir
+		}
 	}
 	dataDir = normalizedDataDir
 
+	historyFile, err := pathutil.JoinBaseFile(dataDir, HistoryFileName)
+	if err != nil {
+		log.Error().Err(err).Str("dir", dataDir).Msg("Invalid alert history file path")
+		historyFile = filepath.Join(dataDir, HistoryFileName)
+	}
+	backupFile, err := pathutil.JoinBaseFile(dataDir, HistoryBackupFileName)
+	if err != nil {
+		log.Error().Err(err).Str("dir", dataDir).Msg("Invalid alert history backup path")
+		backupFile = filepath.Join(dataDir, HistoryBackupFileName)
+	}
+
 	hm := &HistoryManager{
 		dataDir:      dataDir,
-		historyFile:  filepath.Join(dataDir, HistoryFileName),
-		backupFile:   filepath.Join(dataDir, HistoryBackupFileName),
+		historyFile:  historyFile,
+		backupFile:   backupFile,
 		history:      make([]HistoryEntry, 0),
 		saveInterval: 5 * time.Minute,
 		stopChan:     make(chan struct{}),

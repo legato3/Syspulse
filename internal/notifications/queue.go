@@ -79,7 +79,10 @@ func NewNotificationQueue(dataDir string) (*NotificationQueue, error) {
 		return nil, fmt.Errorf("failed to create notification queue directory: %w", err)
 	}
 
-	dbPath := filepath.Join(dataDir, "notification_queue.db")
+	dbPath, err := pathutil.JoinBaseFile(dataDir, "notification_queue.db")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build notification queue database path: %w", err)
+	}
 
 	// Open database with pragmas in DSN so every pool connection is configured
 	dsn := dbPath + "?" + url.Values{
