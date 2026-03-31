@@ -2,6 +2,7 @@ package ai
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -213,6 +214,26 @@ func TestPatrolRunHistoryStore_SetPersistence(t *testing.T) {
 	runs := store.GetAll()
 	if runs[0].ID != "persisted-1" {
 		t.Errorf("Expected persisted-1, got %s", runs[0].ID)
+	}
+}
+
+func TestPatrolHistoryPersistenceAdapter_LoadPatrolRunHistoryCapsRuns(t *testing.T) {
+	records := make([]config.PatrolRunRecord, MaxPatrolRunHistory+10)
+	for i := range records {
+		records[i] = config.PatrolRunRecord{ID: fmt.Sprintf("run-%d", i)}
+	}
+	persistence := config.NewConfigPersistence(t.TempDir())
+	if err := persistence.SavePatrolRunHistory(records); err != nil {
+		t.Fatalf("SavePatrolRunHistory failed: %v", err)
+	}
+	adapter := NewPatrolHistoryPersistenceAdapter(persistence)
+
+	loaded, err := adapter.LoadPatrolRunHistory()
+	if err != nil {
+		t.Fatalf("LoadPatrolRunHistory failed: %v", err)
+	}
+	if len(loaded) != MaxPatrolRunHistory {
+		t.Fatalf("expected %d runs, got %d", MaxPatrolRunHistory, len(loaded))
 	}
 }
 

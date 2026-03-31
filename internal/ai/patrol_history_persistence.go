@@ -80,8 +80,12 @@ func (a *PatrolHistoryPersistenceAdapter) LoadPatrolRunHistory() ([]PatrolRunRec
 	}
 
 	// Convert from config.PatrolRunRecord to ai.PatrolRunRecord
-	runs := make([]PatrolRunRecord, len(data.Runs))
-	for i, r := range data.Runs {
+	runCount := len(data.Runs)
+	if runCount > MaxPatrolRunHistory {
+		runCount = MaxPatrolRunHistory
+	}
+	runs := make([]PatrolRunRecord, runCount)
+	for i, r := range data.Runs[:runCount] {
 		runs[i] = PatrolRunRecord{
 			ID:                 r.ID,
 			StartedAt:          r.StartedAt,
@@ -203,12 +207,11 @@ func (s *PatrolRunHistoryStore) SetPersistence(p PatrolHistoryPersistence) error
 			return err
 		}
 		if len(runs) > 0 {
+			if len(runs) > s.maxRuns {
+				runs = runs[:s.maxRuns]
+			}
 			s.mu.Lock()
 			s.runs = runs
-			// Trim to max if loaded more than maxRuns
-			if len(s.runs) > s.maxRuns {
-				s.runs = s.runs[:s.maxRuns]
-			}
 			s.mu.Unlock()
 			log.Info().Int("count", len(runs)).Msg("Loaded patrol run history from disk")
 		}
@@ -255,7 +258,10 @@ func (s *PatrolRunHistoryStore) GetRecent(n int) []PatrolRunRecord {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if n <= 0 || n > len(s.runs) {
+	if n <= 0 || n > s.maxRuns {
+		n = s.maxRuns
+	}
+	if n > len(s.runs) {
 		n = len(s.runs)
 	}
 

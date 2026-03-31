@@ -403,7 +403,10 @@ func (c *EventCorrelator) GetCorrelations(limit int) []EventCorrelation {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if limit <= 0 || limit > len(c.correlations) {
+	if limit <= 0 || limit > c.config.MaxCorrelations {
+		limit = c.config.MaxCorrelations
+	}
+	if limit > len(c.correlations) {
 		limit = len(c.correlations)
 	}
 
