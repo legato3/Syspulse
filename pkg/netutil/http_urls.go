@@ -9,6 +9,20 @@ import (
 // NormalizeHTTPBaseURL parses and canonicalizes an HTTP(S) base URL. If the
 // input has no scheme, defaultScheme is applied.
 func NormalizeHTTPBaseURL(rawURL, defaultScheme string) (*url.URL, error) {
+	parsed, err := parseHTTPURL(rawURL, defaultScheme)
+	if err != nil {
+		return nil, err
+	}
+	parsed.RawQuery = ""
+	return parsed, nil
+}
+
+// ValidateAbsoluteHTTPURL validates an already absolute HTTP(S) URL.
+func ValidateAbsoluteHTTPURL(rawURL string) (*url.URL, error) {
+	return parseHTTPURL(rawURL, "")
+}
+
+func parseHTTPURL(rawURL, defaultScheme string) (*url.URL, error) {
 	s := strings.TrimSpace(rawURL)
 	if s == "" {
 		return nil, fmt.Errorf("URL cannot be empty")
@@ -36,11 +50,5 @@ func NormalizeHTTPBaseURL(rawURL, defaultScheme string) (*url.URL, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("URL scheme must be http or https")
 	}
-	parsed.RawQuery = ""
 	return parsed, nil
-}
-
-// ValidateAbsoluteHTTPURL validates an already absolute HTTP(S) URL.
-func ValidateAbsoluteHTTPURL(rawURL string) (*url.URL, error) {
-	return NormalizeHTTPBaseURL(rawURL, "")
 }

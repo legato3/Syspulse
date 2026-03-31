@@ -19,6 +19,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/rcourtman/pulse-go-rewrite/internal/config"
+	"github.com/rcourtman/pulse-go-rewrite/pkg/netutil"
 	"github.com/rs/zerolog/log"
 )
 
@@ -165,7 +166,7 @@ func (s *SAMLService) buildManualMetadata() (*saml.EntityDescriptor, error) {
 		return nil, errors.New("idp sso url is required for manual configuration")
 	}
 
-	ssoURL, err := url.Parse(s.config.IDPSSOURL)
+	ssoURL, err := netutil.ValidateAbsoluteHTTPURL(s.config.IDPSSOURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid idp sso url: %w", err)
 	}
@@ -203,7 +204,7 @@ func (s *SAMLService) buildManualMetadata() (*saml.EntityDescriptor, error) {
 
 	// Add SLO endpoint if configured
 	if s.config.IDPSLOUrl != "" {
-		sloURL, err := url.Parse(s.config.IDPSLOUrl)
+		sloURL, err := netutil.ValidateAbsoluteHTTPURL(s.config.IDPSLOUrl)
 		if err == nil {
 			metadata.IDPSSODescriptors[0].SingleLogoutServices = []saml.Endpoint{
 				{
@@ -448,7 +449,11 @@ func (s *SAMLService) MakeAuthRequest(relayState string) (string, error) {
 		Str("redirect_url", redirectURL.String()).
 		Msg("Created SAML AuthnRequest")
 
-	return redirectURL.String(), nil
+	validatedURL, err := validateSAMLRedirectTarget(redirectURL.String(), s.idpMetadata.IDPSSODescriptors[0].SingleSignOnServices)
+	if err != nil {
+		return "", fmt.Errorf("failed to validate auth redirect: %w", err)
+	}
+	return validatedURL, nil
 }
 
 // ProcessResponse processes a SAML response and extracts user information
@@ -584,7 +589,26 @@ func (s *SAMLService) MakeLogoutRequest(nameID, sessionIdx string) (string, erro
 	// Build redirect URL
 	redirectURL := req.Redirect("")
 
-	return redirectURL.String(), nil
+	return validateSAMLRedirectTarget(redirectURL.String(), s.idpMetadata.IDPSSODescriptors[0].SingleLogoutServices)
+}
+
+func validateSAMLRedirectTarget(rawURL string, allowedEndpoints []saml.Endpoint) (string, error) {
+	validatedURL, err := netutil.ValidateAbsoluteHTTPURL(rawURL)
+	if err != nil {
+		return "", err
+	}
+	for _, endpoint := range allowedEndpoints {
+		endpointURL, err := netutil.ValidateAbsoluteHTTPURL(endpoint.Location)
+		if err != nil {
+			continue
+		}
+		if strings.EqualFold(validatedURL.Scheme, endpointURL.Scheme) &&
+			strings.EqualFold(validatedURL.Host, endpointURL.Host) &&
+			validatedURL.Path == endpointURL.Path {
+			return validatedURL.String(), nil
+		}
+	}
+	return "", fmt.Errorf("redirect target does not match configured SAML endpoint")
 }
 
 // RefreshMetadata reloads IdP metadata (useful for key rotation)
