@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 )
 
 const (
@@ -36,6 +38,12 @@ type Persistence struct {
 // It tries to use a persistent key stored in configDir first, then falls back
 // to machine-id for backwards compatibility with existing installations.
 func NewPersistence(configDir string) (*Persistence, error) {
+	normalizedConfigDir, err := pathutil.NormalizeDir(configDir)
+	if err != nil {
+		return nil, err
+	}
+	configDir = normalizedConfigDir
+
 	// Try to load persistent key from config directory first
 	persistentKey, _ := loadPersistentKey(configDir)
 

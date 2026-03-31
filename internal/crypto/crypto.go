@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rcourtman/pulse-go-rewrite/internal/utils"
 	"github.com/rs/zerolog/log"
 )
@@ -35,6 +36,11 @@ func NewCryptoManagerAt(dataDir string) (*CryptoManager, error) {
 	if dataDir == "" {
 		dataDir = defaultDataDirFn()
 	}
+	normalizedDataDir, err := pathutil.NormalizeDir(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	dataDir = normalizedDataDir
 	keyPath := filepath.Join(dataDir, ".encryption.key")
 
 	key, err := getOrCreateKeyAt(dataDir)
@@ -53,6 +59,11 @@ func getOrCreateKeyAt(dataDir string) ([]byte, error) {
 	if dataDir == "" {
 		dataDir = defaultDataDirFn()
 	}
+	normalizedDataDir, err := pathutil.NormalizeDir(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	dataDir = normalizedDataDir
 
 	keyPath := filepath.Join(dataDir, ".encryption.key")
 	oldKeyPath := legacyKeyPath

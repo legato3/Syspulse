@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rcourtman/pulse-go-rewrite/internal/crypto"
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rs/zerolog/log"
 )
 
@@ -45,7 +46,12 @@ var marshalDiscovery = json.Marshal
 
 // NewStore creates a new discovery store with automatic encryption.
 func NewStore(dataDir string) (*Store, error) {
-	discoveryDir := filepath.Join(dataDir, "discovery")
+	normalizedDataDir, err := pathutil.NormalizeDir(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("invalid discovery data directory: %w", err)
+	}
+
+	discoveryDir := filepath.Join(normalizedDataDir, "discovery")
 	if err := os.MkdirAll(discoveryDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create discovery directory: %w", err)
 	}
@@ -84,10 +90,15 @@ func (s *Store) getFilePath(id string) string {
 }
 
 func (s *Store) getLegacyFilePath(id string) string {
-	// Legacy filename format kept for backward compatibility reads.
-	safeID := strings.ReplaceAll(id, ":", "_")
-	safeID = strings.ReplaceAll(safeID, "/", "_")
-	return filepath.Join(s.dataDir, safeID+".enc")
+	name, ok := pathutil.LegacySafeFilename(id, ".enc")
+	if !ok {
+		return ""
+	}
+	path, err := pathutil.JoinBaseFile(s.dataDir, name)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func hashedStorageName(id string) string {
@@ -266,7 +277,12 @@ func (s *Store) List() ([]*ResourceDiscovery, error) {
 			continue
 		}
 
-		data, err := os.ReadFile(filepath.Join(s.dataDir, entry.Name()))
+		path, err := pathutil.JoinBaseFile(s.dataDir, entry.Name())
+		if err != nil {
+			log.Warn().Err(err).Str("file", entry.Name()).Msg("Skipping unsafe discovery file name")
+			continue
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			log.Warn().Err(err).Str("file", entry.Name()).Msg("Failed to read discovery file")
 			continue
@@ -408,9 +424,15 @@ func (s *Store) getFingerprintFilePath(resourceID string) string {
 }
 
 func (s *Store) getLegacyFingerprintFilePath(resourceID string) string {
-	safeID := strings.ReplaceAll(resourceID, ":", "_")
-	safeID = strings.ReplaceAll(safeID, "/", "_")
-	return filepath.Join(s.fingerprintDir, safeID+".json")
+	name, ok := pathutil.LegacySafeFilename(resourceID, ".json")
+	if !ok {
+		return ""
+	}
+	path, err := pathutil.JoinBaseFile(s.fingerprintDir, name)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // loadFingerprints loads all fingerprints from disk into memory.
@@ -431,7 +453,12 @@ func (s *Store) loadFingerprints() {
 			continue
 		}
 
-		data, err := os.ReadFile(filepath.Join(s.fingerprintDir, entry.Name()))
+		path, err := pathutil.JoinBaseFile(s.fingerprintDir, entry.Name())
+		if err != nil {
+			log.Warn().Err(err).Str("file", entry.Name()).Msg("Skipping unsafe fingerprint file name")
+			continue
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			log.Warn().Err(err).Str("file", entry.Name()).Msg("Failed to read fingerprint file")
 			continue

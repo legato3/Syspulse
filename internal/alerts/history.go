@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rcourtman/pulse-go-rewrite/internal/utils"
 	"github.com/rs/zerolog/log"
 )
@@ -50,6 +51,12 @@ func NewHistoryManager(dataDir string) *HistoryManager {
 	if dataDir == "" {
 		dataDir = utils.GetDataDir()
 	}
+	normalizedDataDir, err := pathutil.NormalizeDir(dataDir)
+	if err != nil {
+		log.Error().Err(err).Str("dir", dataDir).Msg("Invalid alert history data directory")
+		normalizedDataDir = filepath.Clean(dataDir)
+	}
+	dataDir = normalizedDataDir
 
 	hm := &HistoryManager{
 		dataDir:      dataDir,

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rs/zerolog/log"
 )
 
@@ -52,7 +53,12 @@ type sessionData struct {
 
 // NewSessionStore creates a new session store
 func NewSessionStore(dataDir string) (*SessionStore, error) {
-	sessionsDir := filepath.Join(dataDir, "ai_sessions")
+	normalizedDataDir, err := pathutil.NormalizeDir(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session data directory: %w", err)
+	}
+
+	sessionsDir := filepath.Join(normalizedDataDir, "ai_sessions")
 	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create sessions directory: %w", err)
 	}
@@ -72,7 +78,15 @@ func (s *SessionStore) sessionPath(id string) string {
 }
 
 func (s *SessionStore) legacySessionPath(id string) string {
-	return filepath.Join(s.dataDir, id+".json")
+	name, ok := pathutil.LegacySafeFilename(id, ".json")
+	if !ok {
+		return ""
+	}
+	path, err := pathutil.JoinBaseFile(s.dataDir, name)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func hashedSessionStorageName(id string) string {
@@ -108,7 +122,12 @@ func (s *SessionStore) List() ([]Session, error) {
 			continue
 		}
 
-		file, err := os.ReadFile(filepath.Join(s.dataDir, entry.Name()))
+		path, err := pathutil.JoinBaseFile(s.dataDir, entry.Name())
+		if err != nil {
+			log.Warn().Err(err).Str("file", entry.Name()).Msg("Skipping unsafe session file name")
+			continue
+		}
+		file, err := os.ReadFile(path)
 		if err != nil {
 			log.Warn().Err(err).Str("file", entry.Name()).Msg("Failed to read session file")
 			continue

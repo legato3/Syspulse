@@ -2,15 +2,19 @@
 package knowledge
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/rcourtman/pulse-go-rewrite/internal/crypto"
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rs/zerolog/log"
 )
 
@@ -59,13 +63,18 @@ var beforeKnowledgeWriteLock func()
 
 // NewStore creates a new knowledge store with encryption
 func NewStore(dataDir string) (*Store, error) {
-	knowledgeDir := filepath.Join(dataDir, "knowledge")
+	normalizedDataDir, err := pathutil.NormalizeDir(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("invalid knowledge data directory: %w", err)
+	}
+
+	knowledgeDir := filepath.Join(normalizedDataDir, "knowledge")
 	if err := os.MkdirAll(knowledgeDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create knowledge directory: %w", err)
 	}
 
 	// Initialize crypto manager for encryption (uses same key as other Pulse secrets)
-	cryptoMgr, err := newCryptoManagerAt(dataDir)
+	cryptoMgr, err := newCryptoManagerAt(normalizedDataDir)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to initialize crypto for knowledge store, data will be unencrypted")
 	}
@@ -79,13 +88,29 @@ func NewStore(dataDir string) (*Store, error) {
 
 // guestFilePath returns the file path for a guest's knowledge
 func (s *Store) guestFilePath(guestID string) string {
-	// Sanitize guest ID for filesystem
-	safeID := filepath.Base(guestID) // Prevent path traversal
+	safeID := hashedKnowledgeStorageName(guestID)
 	// Use .enc extension for encrypted files
 	if s.crypto != nil {
 		return filepath.Join(s.dataDir, safeID+".enc")
 	}
 	return filepath.Join(s.dataDir, safeID+".json")
+}
+
+func (s *Store) legacyGuestFilePath(guestID string) string {
+	name, ok := pathutil.LegacySafeFilename(guestID, ".json")
+	if !ok {
+		return ""
+	}
+	path, err := pathutil.JoinBaseFile(s.dataDir, name)
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+func hashedKnowledgeStorageName(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])
 }
 
 // GetKnowledge retrieves knowledge for a guest
@@ -113,7 +138,15 @@ func (s *Store) GetKnowledge(guestID string) (*GuestKnowledge, error) {
 	data, err := os.ReadFile(filePath)
 	if os.IsNotExist(err) {
 		// Try legacy unencrypted file
-		legacyPath := filepath.Join(s.dataDir, filepath.Base(guestID)+".json")
+		legacyPath := s.legacyGuestFilePath(guestID)
+		if legacyPath == "" {
+			knowledge := &GuestKnowledge{
+				GuestID: guestID,
+				Notes:   []Note{},
+			}
+			s.cache[guestID] = knowledge
+			return knowledge, nil
+		}
 		data, err = os.ReadFile(legacyPath)
 		if os.IsNotExist(err) {
 			// No knowledge yet, return empty
@@ -176,9 +209,18 @@ func (s *Store) SaveNote(guestID, guestName, guestType, category, title, content
 
 		// Check for existing file
 		filePath := s.guestFilePath(guestID)
-		if data, err := os.ReadFile(filePath); err == nil {
+		loadedPath := filePath
+		legacyPath := s.legacyGuestFilePath(guestID)
+		data, err := os.ReadFile(filePath)
+		if err != nil && os.IsNotExist(err) && legacyPath != "" {
+			data, err = os.ReadFile(legacyPath)
+			if err == nil {
+				loadedPath = legacyPath
+			}
+		}
+		if err == nil {
 			// Decrypt if needed
-			if s.crypto != nil && filepath.Ext(filePath) == ".enc" {
+			if s.crypto != nil && filepath.Ext(loadedPath) == ".enc" {
 				if decrypted, err := s.crypto.Decrypt(data); err == nil {
 					data = decrypted
 				}
@@ -341,10 +383,12 @@ func (s *Store) saveToFile(guestID string, knowledge *GuestKnowledge) error {
 
 	// Remove legacy unencrypted file if it exists
 	if s.crypto != nil {
-		legacyPath := filepath.Join(s.dataDir, filepath.Base(guestID)+".json")
-		if _, err := os.Stat(legacyPath); err == nil {
-			os.Remove(legacyPath)
-			log.Info().Str("guest_id", guestID).Msg("Removed legacy unencrypted knowledge file")
+		legacyPath := s.legacyGuestFilePath(guestID)
+		if legacyPath != "" {
+			if _, err := os.Stat(legacyPath); err == nil {
+				os.Remove(legacyPath)
+				log.Info().Str("guest_id", guestID).Msg("Removed legacy unencrypted knowledge file")
+			}
 		}
 	}
 
@@ -364,14 +408,52 @@ func (s *Store) ListGuests() ([]string, error) {
 		return nil, fmt.Errorf("failed to read knowledge directory: %w", err)
 	}
 
+	seen := make(map[string]struct{})
 	var guests []string
 	for _, file := range files {
-		ext := filepath.Ext(file.Name())
-		if ext == ".json" || ext == ".enc" {
-			guestID := file.Name()[:len(file.Name())-len(ext)]
-			guests = append(guests, guestID)
+		if file.IsDir() {
+			continue
 		}
+		ext := filepath.Ext(file.Name())
+		if ext != ".json" && ext != ".enc" {
+			continue
+		}
+
+		path, joinErr := pathutil.JoinBaseFile(s.dataDir, file.Name())
+		if joinErr != nil {
+			continue
+		}
+
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			log.Warn().Err(readErr).Str("file", file.Name()).Msg("Failed to read knowledge file")
+			continue
+		}
+
+		if ext == ".enc" && s.crypto != nil {
+			decrypted, decryptErr := s.crypto.Decrypt(data)
+			if decryptErr != nil {
+				log.Warn().Err(decryptErr).Str("file", file.Name()).Msg("Failed to decrypt knowledge file")
+				continue
+			}
+			data = decrypted
+		}
+
+		var knowledge GuestKnowledge
+		if err := json.Unmarshal(data, &knowledge); err != nil {
+			log.Warn().Err(err).Str("file", file.Name()).Msg("Failed to parse knowledge file")
+			continue
+		}
+		if knowledge.GuestID == "" {
+			continue
+		}
+		if _, ok := seen[knowledge.GuestID]; ok {
+			continue
+		}
+		seen[knowledge.GuestID] = struct{}{}
+		guests = append(guests, knowledge.GuestID)
 	}
+	sort.Strings(guests)
 	return guests, nil
 }
 

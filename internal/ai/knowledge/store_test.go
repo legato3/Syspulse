@@ -3,6 +3,7 @@ package knowledge
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -163,6 +164,40 @@ func TestNewStore(t *testing.T) {
 	}
 	if store == nil {
 		t.Fatal("Expected non-nil store")
+	}
+}
+
+func TestKnowledgeStore_HashedPathsAndLegacyCompatibility(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	guestID := "guest/with:unsafe"
+	path := store.guestFilePath(guestID)
+	base := filepath.Base(path)
+	if strings.Contains(base, "guest") || strings.Contains(base, "/") || strings.Contains(base, ":") || strings.Contains(base, "..") {
+		t.Fatalf("expected hashed knowledge filename, got %s", base)
+	}
+
+	legacyPath := store.legacyGuestFilePath(guestID)
+	if legacyPath == "" {
+		t.Fatal("expected legacy path for compatibility")
+	}
+
+	raw := []byte(`{"guest_id":"guest/with:unsafe","guest_name":"LegacyGuest","guest_type":"vm","notes":[],"updated_at":"2026-03-31T00:00:00Z"}`)
+	if err := os.WriteFile(legacyPath, raw, 0600); err != nil {
+		t.Fatalf("failed to write legacy knowledge file: %v", err)
+	}
+
+	knowledge, err := store.GetKnowledge(guestID)
+	if err != nil {
+		t.Fatalf("failed to load legacy knowledge: %v", err)
+	}
+	if knowledge.GuestName != "LegacyGuest" {
+		t.Fatalf("expected LegacyGuest, got %q", knowledge.GuestName)
 	}
 }
 

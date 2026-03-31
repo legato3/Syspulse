@@ -17,6 +17,7 @@ import (
 	"github.com/rcourtman/pulse-go-rewrite/internal/mock"
 	"github.com/rcourtman/pulse-go-rewrite/internal/models"
 	"github.com/rcourtman/pulse-go-rewrite/internal/notifications"
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rs/zerolog/log"
 )
 
@@ -100,6 +101,11 @@ func newConfigPersistence(configDir string) (*ConfigPersistence, error) {
 			configDir = "/etc/pulse"
 		}
 	}
+	normalizedConfigDir, err := pathutil.NormalizeDir(configDir)
+	if err != nil {
+		return nil, err
+	}
+	configDir = normalizedConfigDir
 
 	// Initialize crypto manager
 	cryptoMgr, err := crypto.NewCryptoManagerAt(configDir)

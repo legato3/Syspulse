@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rcourtman/pulse-go-rewrite/internal/pathutil"
 	"github.com/rs/zerolog/log"
 	_ "modernc.org/sqlite"
 )
@@ -105,6 +106,12 @@ type Store struct {
 
 // NewStore creates a new metrics store with the given configuration
 func NewStore(config StoreConfig) (*Store, error) {
+	normalizedDBPath, err := pathutil.NormalizeDir(filepath.Dir(config.DBPath))
+	if err != nil {
+		return nil, fmt.Errorf("invalid metrics database directory: %w", err)
+	}
+	config.DBPath = filepath.Join(normalizedDBPath, filepath.Base(config.DBPath))
+
 	// Ensure directory exists
 	dir := filepath.Dir(config.DBPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
