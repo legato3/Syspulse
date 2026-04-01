@@ -217,8 +217,12 @@ func TestCollectSwarmDataFromManager(t *testing.T) {
 				if got := opts.Filters.Get("node"); len(got) != 1 || got[0] != "node1" {
 					t.Fatalf("expected node filter to include node1, got %v", got)
 				}
+				if got := opts.Filters.Get("desired-state"); len(got) != 1 || got[0] != string(swarmtypes.TaskStateRunning) {
+					t.Fatalf("expected desired-state filter to include running, got %v", got)
+				}
 				return []swarmtypes.Task{
 					{ID: "task1", ServiceID: "svc1", DesiredState: swarmtypes.TaskStateRunning, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning}},
+					{ID: "task-old", ServiceID: "svc2", DesiredState: swarmtypes.TaskStateShutdown, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateComplete}},
 				}, nil
 			},
 		},
@@ -236,6 +240,9 @@ func TestCollectSwarmDataFromManager(t *testing.T) {
 	}
 	if len(tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].ID != "task1" {
+		t.Fatalf("expected running task only, got %#v", tasks)
 	}
 	if len(services) != 1 {
 		t.Fatalf("expected filtered services, got %d", len(services))
@@ -267,6 +274,37 @@ func TestCollectSwarmDataFromManager(t *testing.T) {
 		}
 		if len(services) != 1 || tasks != nil {
 			t.Fatalf("expected services only on task error")
+		}
+	})
+}
+
+func TestIsRuntimeSwarmTask(t *testing.T) {
+	t.Run("accepts desired running task", func(t *testing.T) {
+		task := &swarmtypes.Task{
+			DesiredState: swarmtypes.TaskStateRunning,
+			Status:       swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning},
+		}
+		if !isRuntimeSwarmTask(task) {
+			t.Fatal("expected running task to be retained")
+		}
+	})
+
+	t.Run("accepts empty desired state active task as fallback", func(t *testing.T) {
+		task := &swarmtypes.Task{
+			Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStatePreparing},
+		}
+		if !isRuntimeSwarmTask(task) {
+			t.Fatal("expected active task with empty desired state to be retained")
+		}
+	})
+
+	t.Run("rejects shutdown historical task", func(t *testing.T) {
+		task := &swarmtypes.Task{
+			DesiredState: swarmtypes.TaskStateShutdown,
+			Status:       swarmtypes.TaskStatus{State: swarmtypes.TaskStateComplete},
+		}
+		if isRuntimeSwarmTask(task) {
+			t.Fatal("expected historical task to be excluded")
 		}
 	})
 }
@@ -376,8 +414,8 @@ func TestCollectSwarmData(t *testing.T) {
 				},
 				taskListFn: func(context.Context, taskListOptions) ([]swarmtypes.Task, error) {
 					return []swarmtypes.Task{
-						{ID: "task2", ServiceID: "svc2", Slot: 2},
-						{ID: "task1", ServiceID: "svc2", Slot: 1},
+						{ID: "task2", ServiceID: "svc2", Slot: 2, DesiredState: swarmtypes.TaskStateRunning, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning}},
+						{ID: "task1", ServiceID: "svc2", Slot: 1, DesiredState: swarmtypes.TaskStateRunning, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning}},
 					}, nil
 				},
 			},
@@ -495,10 +533,10 @@ func TestCollectSwarmData(t *testing.T) {
 				},
 				taskListFn: func(context.Context, taskListOptions) ([]swarmtypes.Task, error) {
 					return []swarmtypes.Task{
-						{ID: "b", ServiceID: "a", Slot: 1},
-						{ID: "a", ServiceID: "a", Slot: 1},
-						{ID: "c", ServiceID: "a", Slot: 2},
-						{ID: "d", ServiceID: "c", Slot: 1},
+						{ID: "b", ServiceID: "a", Slot: 1, DesiredState: swarmtypes.TaskStateRunning, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning}},
+						{ID: "a", ServiceID: "a", Slot: 1, DesiredState: swarmtypes.TaskStateRunning, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning}},
+						{ID: "c", ServiceID: "a", Slot: 2, DesiredState: swarmtypes.TaskStateRunning, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning}},
+						{ID: "d", ServiceID: "c", Slot: 1, DesiredState: swarmtypes.TaskStateRunning, Status: swarmtypes.TaskStatus{State: swarmtypes.TaskStateRunning}},
 					}, nil
 				},
 			},
