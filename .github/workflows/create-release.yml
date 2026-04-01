@@ -360,14 +360,16 @@ jobs:
             echo "See commit history for changes." >> "$NOTES_FILE"
           fi
 
-          {
-            echo ""
-            echo "## Installation"
-            echo ""
-            echo "If you run Pulse via Docker or Compose, update to \`rcourtman/pulse:${VERSION}\`."
-            echo ""
-            echo "See the [Installation Guide](https://github.com/rcourtman/Pulse#installation) for other deployment methods."
-          } >> "$NOTES_FILE"
+          if ! grep -Eiq '^##[[:space:]]+Installation[[:space:]]*$' "$NOTES_FILE"; then
+            {
+              echo ""
+              echo "## Installation"
+              echo ""
+              echo "If you run Pulse via Docker or Compose, update to \`rcourtman/pulse:${VERSION}\`."
+              echo ""
+              echo "See the [Installation Guide](https://github.com/rcourtman/Pulse#installation) for other deployment methods."
+            } >> "$NOTES_FILE"
+          fi
 
           echo "notes_file=${NOTES_FILE}" >> $GITHUB_OUTPUT
 

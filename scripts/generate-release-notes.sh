@@ -197,30 +197,12 @@ Generate release notes following this format:
 
 ---
 
-## Installation
-
-**Quick Install (LXC / Proxmox VE):**
-\`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/rcourtman/Pulse/main/install.sh | bash
-\`\`\`
-
-**Docker:**
-\`\`\`bash
-docker pull rcourtman/pulse:${VERSION}
-\`\`\`
-
-**Helm:**
-\`\`\`bash
-helm upgrade --install pulse oci://ghcr.io/rcourtman/pulse-chart --version ${VERSION}
-\`\`\`
-
-See the [Installation Guide](https://github.com/rcourtman/Pulse#installation) for details.
-
 GUIDELINES:
 - Write plain, factual release notes. No marketing language or excitement.
 - Only mention features that exist in the FINAL code state
 - Do not mention internal refactors, test changes, or CI/CD improvements
 - Do not mention AI features prominently - these are optional features
+- Do not add an Installation section; the release workflow appends that automatically
 - Keep it concise and boring - users want facts, not hype
 - If a section has no items, omit the section entirely
 - No emojis
