@@ -370,6 +370,7 @@ func TestRegisterWithPulseRetry(t *testing.T) {
 	var gotAuth string
 	var gotAPIToken string
 	var gotAuthToken string
+	var gotCandidateHosts []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotAPIToken = r.Header.Get("X-API-Token")
@@ -379,6 +380,14 @@ func TestRegisterWithPulseRetry(t *testing.T) {
 		}
 		if token, _ := payload["authToken"].(string); token != "" {
 			gotAuthToken = token
+		}
+		if rawCandidates, ok := payload["candidateHosts"].([]interface{}); ok {
+			gotCandidateHosts = gotCandidateHosts[:0]
+			for _, raw := range rawCandidates {
+				if candidate, ok := raw.(string); ok {
+					gotCandidateHosts = append(gotCandidateHosts, candidate)
+				}
+			}
 		}
 		n := atomic.AddInt32(&attempt, 1)
 		if n <= 2 {
@@ -413,6 +422,12 @@ func TestRegisterWithPulseRetry(t *testing.T) {
 	}
 	if gotAuthToken != "test-token" {
 		t.Fatalf("authToken payload = %q, want %q", gotAuthToken, "test-token")
+	}
+	if len(gotCandidateHosts) == 0 {
+		t.Fatal("expected candidateHosts payload to be present")
+	}
+	if gotCandidateHosts[0] != "https://10.0.0.1:8006" {
+		t.Fatalf("candidateHosts[0] = %q, want %q", gotCandidateHosts[0], "https://10.0.0.1:8006")
 	}
 }
 

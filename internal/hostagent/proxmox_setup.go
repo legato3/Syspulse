@@ -611,69 +611,99 @@ func (p *ProxmoxSetup) parsePBSTokenValue(output string) string {
 	return ""
 }
 
-// getHostURL constructs the host URL for this Proxmox node.
-// Uses the local IP that can reach Pulse, falling back to intelligent IP selection.
-func (p *ProxmoxSetup) getHostURL(ptype string) string {
+func appendUniqueHostCandidate(candidates []string, seen map[string]struct{}, candidate string) []string {
+	normalized := strings.TrimSpace(candidate)
+	if normalized == "" {
+		return candidates
+	}
+	if _, exists := seen[normalized]; exists {
+		return candidates
+	}
+	seen[normalized] = struct{}{}
+	return append(candidates, normalized)
+}
+
+func (p *ProxmoxSetup) candidateHostURLs(ptype string) []string {
 	port := "8006"
 	if ptype == "pbs" {
 		port = "8007"
 	}
 
-	// Priority 1: User-specified ReportIP override from configuration.
-	// This allows users to manually specify which IP should be used for Proxmox API
-	// connections when auto-detection picks the wrong one (e.g., Issue #1061).
-	if p.reportIP != "" {
-		p.logger.Info().Str("ip", p.reportIP).Msg("Using user-specified ReportIP for Proxmox registration")
-		return fmt.Sprintf("https://%s:%s", p.reportIP, port)
+	candidates := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	buildURL := func(host string) string {
+		if strings.TrimSpace(host) == "" {
+			return ""
+		}
+		return fmt.Sprintf("https://%s:%s", host, port)
 	}
 
-	// Priority 2: Prefer the system hostname when it resolves to a non-loopback address.
-	// This preserves admin-managed DNS names and matching TLS certificates instead of
-	// silently downgrading to an inferred IP address, which can pick the wrong interface
-	// on multi-NIC Proxmox hosts and break internal-CA deployments.
+	// Respect an explicit operator override as authoritative.
+	if p.reportIP != "" {
+		return append(candidates, buildURL(p.reportIP))
+	}
+
+	if p.collector == nil {
+		hostname := strings.TrimSpace(p.hostname)
+		if hostname == "" {
+			hostname = "localhost"
+		}
+		return append(candidates, buildURL(hostname))
+	}
+
+	// Keep the hostname candidate first for environments where Pulse can resolve
+	// the managed DNS name and should preserve the node certificate identity.
 	if hostname := strings.TrimSpace(p.hostname); hostname != "" {
 		if hostnameIP := p.getIPForHostname(); hostnameIP != "" && !isLoopbackOrLinkLocalIP(hostnameIP) {
-			p.logger.Debug().
-				Str("hostname", hostname).
-				Str("ip", hostnameIP).
-				Msg("Using resolvable hostname for Proxmox registration")
-			return fmt.Sprintf("https://%s:%s", hostname, port)
+			candidates = appendUniqueHostCandidate(candidates, seen, buildURL(hostname))
 		}
 	}
 
-	// Priority 3: Try to determine which local IP is used to connect to Pulse.
-	// This remains a fallback for environments without usable hostname resolution.
+	// Also provide the exact local IP that can reach Pulse so the server can fall
+	// back to a proven-routable endpoint when the hostname is not reachable from
+	// the Pulse host (for example inside a Docker bridge without internal DNS).
 	if reachableIP := p.getIPThatReachesPulse(); reachableIP != "" {
-		p.logger.Debug().Str("ip", reachableIP).Msg("Using IP that can reach Pulse server")
-		return fmt.Sprintf("https://%s:%s", reachableIP, port)
+		candidates = appendUniqueHostCandidate(candidates, seen, buildURL(reachableIP))
 	}
 
-	// Priority 4: Get all IPs and select the best one based on heuristics.
 	if out, err := p.collector.CommandCombinedOutput(context.Background(), "hostname", "-I"); err == nil {
 		ips := strings.Fields(out)
 		if len(ips) > 0 {
-			// Get the IP that the system hostname currently resolves to
 			hostnameIP := p.getIPForHostname()
-
-			bestIP := selectBestIP(ips, hostnameIP)
-			if bestIP != "" {
-				return fmt.Sprintf("https://%s:%s", bestIP, port)
+			if bestIP := selectBestIP(ips, hostnameIP); bestIP != "" {
+				candidates = appendUniqueHostCandidate(candidates, seen, buildURL(bestIP))
 			}
 		}
 	}
 
-	// Final fallback to hostname if IP detection failed
-	hostname := p.hostname
+	if len(candidates) > 0 {
+		return candidates
+	}
+
+	hostname := strings.TrimSpace(p.hostname)
 	if hostname == "" {
 		hostname = "localhost"
 	}
-	return fmt.Sprintf("https://%s:%s", hostname, port)
+	return append(candidates, buildURL(hostname))
+}
+
+// getHostURL constructs the host URL for this Proxmox node.
+// Uses the local IP that can reach Pulse, falling back to intelligent IP selection.
+func (p *ProxmoxSetup) getHostURL(ptype string) string {
+	candidates := p.candidateHostURLs(ptype)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
 }
 
 // getIPThatReachesPulse determines which local IP is used to connect to the Pulse server.
 // This handles cases where multiple network interfaces exist (e.g., management, Ceph, cluster ring)
 // and ensures we pick the one that can actually reach Pulse. Related to #929.
 func (p *ProxmoxSetup) getIPThatReachesPulse() string {
+	if p.collector == nil {
+		return ""
+	}
 	if p.pulseURL == "" {
 		return ""
 	}
@@ -726,6 +756,9 @@ func (p *ProxmoxSetup) getIPThatReachesPulse() string {
 
 // getIPForHostname resolves the system hostname to an IP address.
 func (p *ProxmoxSetup) getIPForHostname() string {
+	if p.collector == nil {
+		return ""
+	}
 	hostname := p.hostname
 	if hostname == "" {
 		hostname, _ = p.collector.Hostname()
@@ -898,13 +931,25 @@ func (p *ProxmoxSetup) doRegisterRequest(ctx context.Context, body []byte) error
 
 // registerWithPulse calls the auto-register endpoint to add the node.
 func (p *ProxmoxSetup) registerWithPulse(ctx context.Context, ptype, hostURL, tokenID, tokenValue string) error {
+	candidateHosts := p.candidateHostURLs(ptype)
+	if len(candidateHosts) == 0 || candidateHosts[0] != hostURL {
+		seen := make(map[string]struct{}, len(candidateHosts)+1)
+		reordered := make([]string, 0, len(candidateHosts)+1)
+		reordered = appendUniqueHostCandidate(reordered, seen, hostURL)
+		for _, candidate := range candidateHosts {
+			reordered = appendUniqueHostCandidate(reordered, seen, candidate)
+		}
+		candidateHosts = reordered
+	}
+
 	payload := map[string]interface{}{
-		"type":       ptype,
-		"host":       hostURL,
-		"serverName": p.hostname,
-		"tokenId":    tokenID,
-		"tokenValue": tokenValue,
-		"source":     "agent", // Indicates this was registered via agent
+		"type":           ptype,
+		"host":           hostURL,
+		"candidateHosts": candidateHosts,
+		"serverName":     p.hostname,
+		"tokenId":        tokenID,
+		"tokenValue":     tokenValue,
+		"source":         "agent", // Indicates this was registered via agent
 	}
 	if token := strings.TrimSpace(p.apiToken); token != "" {
 		// Auto-register accepts one-time setup tokens via the JSON body. The

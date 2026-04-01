@@ -1277,3 +1277,79 @@ func TestHandleAutoRegisterUpdateDoesNotClearFingerprintWhenFetchFails(t *testin
 		t.Fatalf("expected existing fingerprint to be preserved, got %q", cfg.PVEInstances[0].Fingerprint)
 	}
 }
+
+func TestHandleAutoRegisterSelectsReachableFallbackCandidateHost(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("PULSE_DATA_DIR", tempDir)
+
+	originalDetectPVECluster := detectPVECluster
+	detectPVECluster = func(clientConfig proxmox.ClientConfig, nodeName string, existingEndpoints []config.ClusterEndpoint) (bool, string, []config.ClusterEndpoint) {
+		return false, "", nil
+	}
+	defer func() { detectPVECluster = originalDetectPVECluster }()
+
+	pveServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer pveServer.Close()
+
+	cfg := &config.Config{
+		DataPath:   tempDir,
+		ConfigPath: tempDir,
+	}
+	handler := newTestConfigHandlers(t, cfg)
+
+	const authToken = "TEMP-TOKEN-FALLBACK"
+	tokenHash := internalauth.HashAPIToken(authToken)
+	handler.codeMutex.Lock()
+	handler.setupCodes[tokenHash] = &SetupCode{
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+		NodeType:  "pve",
+	}
+	handler.codeMutex.Unlock()
+
+	reqBody := AutoRegisterRequest{
+		Type:           "pve",
+		Host:           "https://127.0.0.1:1",
+		CandidateHosts: []string{"https://127.0.0.1:1", pveServer.URL},
+		TokenID:        "pulse-monitor@pam!pulse-fallback",
+		TokenValue:     "secret-token",
+		ServerName:     "pve01",
+		Source:         "agent",
+		AuthToken:      authToken,
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auto-register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.HandleAutoRegister(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("registration failed: status=%d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	if len(cfg.PVEInstances) != 1 {
+		t.Fatalf("expected 1 PVE instance, got %d", len(cfg.PVEInstances))
+	}
+
+	expectedHost, err := normalizeNodeHost(pveServer.URL, "pve")
+	if err != nil {
+		t.Fatalf("failed to normalize expected host: %v", err)
+	}
+	if cfg.PVEInstances[0].Host != expectedHost {
+		t.Fatalf("selected host = %q, want reachable fallback %q", cfg.PVEInstances[0].Host, expectedHost)
+	}
+
+	expectedFP, err := tlsutil.FetchFingerprint(pveServer.URL)
+	if err != nil {
+		t.Fatalf("failed to fetch expected fingerprint: %v", err)
+	}
+	if cfg.PVEInstances[0].Fingerprint != expectedFP {
+		t.Fatalf("fingerprint = %q, want %q", cfg.PVEInstances[0].Fingerprint, expectedFP)
+	}
+	if !cfg.PVEInstances[0].VerifySSL {
+		t.Fatal("expected verifySSL to be enabled when fallback fingerprint capture succeeds")
+	}
+}

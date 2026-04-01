@@ -5322,14 +5322,15 @@ func (h *ConfigHandlers) HandleUpdateMockMode(w http.ResponseWriter, r *http.Req
 
 // AutoRegisterRequest represents a request from the setup script or agent to auto-register a node
 type AutoRegisterRequest struct {
-	Type       string `json:"type"`                 // "pve" or "pbs"
-	Host       string `json:"host"`                 // The host URL
-	TokenID    string `json:"tokenId"`              // Full token ID like pulse-monitor@pam!pulse-token
-	TokenValue string `json:"tokenValue,omitempty"` // The token value for the node
-	ServerName string `json:"serverName"`           // Hostname or IP
-	SetupCode  string `json:"setupCode,omitempty"`  // One-time setup code for authentication (deprecated)
-	AuthToken  string `json:"authToken,omitempty"`  // Direct auth token from URL (new approach)
-	Source     string `json:"source,omitempty"`     // "agent" or "script" - indicates how the node was registered
+	Type           string   `json:"type"`                     // "pve" or "pbs"
+	Host           string   `json:"host"`                     // The preferred host URL
+	CandidateHosts []string `json:"candidateHosts,omitempty"` // Alternate host URLs the server can try from its own network view
+	TokenID        string   `json:"tokenId"`                  // Full token ID like pulse-monitor@pam!pulse-token
+	TokenValue     string   `json:"tokenValue,omitempty"`     // The token value for the node
+	ServerName     string   `json:"serverName"`               // Hostname or IP
+	SetupCode      string   `json:"setupCode,omitempty"`      // One-time setup code for authentication (deprecated)
+	AuthToken      string   `json:"authToken,omitempty"`      // Direct auth token from URL (new approach)
+	Source         string   `json:"source,omitempty"`         // "agent" or "script" - indicates how the node was registered
 	// CheckRegistration asks Pulse whether this Proxmox type already exists in config.
 	// Used by agents to validate stale local registration marker files after server reinstalls.
 	CheckRegistration bool `json:"checkRegistration,omitempty"`
@@ -5337,6 +5338,73 @@ type AutoRegisterRequest struct {
 	RequestToken bool   `json:"requestToken,omitempty"` // If true, Pulse will generate and return a token
 	Username     string `json:"username,omitempty"`     // Username for creating token (e.g., "root@pam")
 	Password     string `json:"password,omitempty"`     // Password for authentication (never stored)
+}
+
+func normalizeAutoRegisterHostCandidates(nodeType, primary string, alternates []string) ([]string, error) {
+	candidates := make([]string, 0, len(alternates)+1)
+	seen := make(map[string]struct{}, len(alternates)+1)
+	addCandidate := func(raw string) error {
+		if strings.TrimSpace(raw) == "" {
+			return nil
+		}
+		normalized, err := normalizeNodeHost(raw, nodeType)
+		if err != nil {
+			return err
+		}
+		if _, exists := seen[normalized]; exists {
+			return nil
+		}
+		seen[normalized] = struct{}{}
+		candidates = append(candidates, normalized)
+		return nil
+	}
+
+	if err := addCandidate(primary); err != nil {
+		return nil, err
+	}
+	for _, candidate := range alternates {
+		if err := addCandidate(candidate); err != nil {
+			log.Debug().
+				Str("type", nodeType).
+				Str("candidate", candidate).
+				Err(err).
+				Msg("Ignoring invalid auto-register host candidate")
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("host is required")
+	}
+	return candidates, nil
+}
+
+func selectAutoRegisterHost(nodeType, primary string, alternates []string) (string, string, bool, []string, error) {
+	candidates, err := normalizeAutoRegisterHostCandidates(nodeType, primary, alternates)
+	if err != nil {
+		return "", "", false, nil, err
+	}
+
+	for idx, candidate := range candidates {
+		fingerprint, err := tlsutil.FetchFingerprint(candidate)
+		if err != nil {
+			log.Debug().
+				Str("type", nodeType).
+				Str("candidate", candidate).
+				Err(err).
+				Msg("Auto-register candidate not reachable for fingerprint capture")
+			continue
+		}
+		if idx > 0 {
+			log.Info().
+				Str("type", nodeType).
+				Str("selectedHost", candidate).
+				Str("requestedHost", candidates[0]).
+				Msg("Auto-register switched to fallback host candidate reachable from Pulse")
+		}
+		return candidate, fingerprint, true, candidates, nil
+	}
+
+	return candidates[0], "", false, candidates, nil
 }
 
 func autoRegisterNodeMatchesHost(nodeHost, requestedHost string) bool {
@@ -5369,16 +5437,30 @@ func (h *ConfigHandlers) autoRegisteredNodeExists(ctx context.Context, req *Auto
 		return false
 	}
 
+	candidates, err := normalizeAutoRegisterHostCandidates(req.Type, req.Host, req.CandidateHosts)
+	if err != nil {
+		return false
+	}
+
+	matchesAny := func(nodeHost string) bool {
+		for _, candidate := range candidates {
+			if autoRegisterNodeMatchesHost(nodeHost, candidate) {
+				return true
+			}
+		}
+		return false
+	}
+
 	switch strings.ToLower(strings.TrimSpace(req.Type)) {
 	case "pve":
 		for _, node := range h.getConfig(ctx).PVEInstances {
-			if autoRegisterNodeMatchesHost(node.Host, req.Host) {
+			if matchesAny(node.Host) {
 				return true
 			}
 		}
 	case "pbs":
 		for _, node := range h.getConfig(ctx).PBSInstances {
-			if autoRegisterNodeMatchesHost(node.Host, req.Host) {
+			if matchesAny(node.Host) {
 				return true
 			}
 		}
@@ -5649,23 +5731,15 @@ func (h *ConfigHandlers) HandleAutoRegister(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	host, err := normalizeNodeHost(req.Host, req.Type)
+	host, fingerprint, verifySSL, candidateHosts, err := selectAutoRegisterHost(req.Type, req.Host, req.CandidateHosts)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	fingerprint := ""
-	if fp, err := tlsutil.FetchFingerprint(host); err != nil {
-		log.Warn().Err(err).Str("host", host).Msg("Failed to fetch TLS fingerprint for auto-register")
-	} else {
-		fingerprint = fp
-	}
-
 	// Create a node configuration
 	boolFalse := false
 	boolTrue := true
-	verifySSL := fingerprint != "" // Only enforce strict TLS when we have a fingerprint to verify against
 	nodeConfig := NodeConfigRequest{
 		Type:               req.Type,
 		Name:               req.ServerName,
@@ -5684,6 +5758,13 @@ func (h *ConfigHandlers) HandleAutoRegister(w http.ResponseWriter, r *http.Reque
 		MonitorPruneJobs:   &boolTrue,
 		MonitorGarbageJobs: &boolFalse,
 	}
+
+	log.Info().
+		Str("type", req.Type).
+		Str("selectedHost", host).
+		Strs("candidateHosts", candidateHosts).
+		Bool("verifySSL", verifySSL).
+		Msg("Resolved auto-register host candidates")
 
 	// Check if a node with this host already exists
 	// IMPORTANT: Match by Host URL primarily.
@@ -6200,7 +6281,7 @@ func (h *ConfigHandlers) handleSecureAutoRegister(w http.ResponseWriter, r *http
 		Str("username", req.Username).
 		Msg("Processing secure auto-register request")
 
-	host, err := normalizeNodeHost(req.Host, req.Type)
+	host, fingerprint, verifySSL, candidateHosts, err := selectAutoRegisterHost(req.Type, req.Host, req.CandidateHosts)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -6219,13 +6300,12 @@ func (h *ConfigHandlers) handleSecureAutoRegister(w http.ResponseWriter, r *http
 	tokenValue := fmt.Sprintf("%x-%x-%x-%x-%x",
 		tokenBytes[0:4], tokenBytes[4:6], tokenBytes[6:8], tokenBytes[8:10], tokenBytes[10:16])
 
-	fingerprint := ""
-	if fp, err := tlsutil.FetchFingerprint(host); err != nil {
-		log.Warn().Err(err).Str("host", host).Msg("Failed to fetch TLS fingerprint for auto-register")
-	} else {
-		fingerprint = fp
-	}
-	verifySSL := fingerprint != "" // Only enforce strict TLS when we have a fingerprint to verify against
+	log.Info().
+		Str("type", req.Type).
+		Str("selectedHost", host).
+		Strs("candidateHosts", candidateHosts).
+		Bool("verifySSL", verifySSL).
+		Msg("Resolved secure auto-register host candidates")
 
 	existingTokenID := ""
 	existingTokenValue := ""
