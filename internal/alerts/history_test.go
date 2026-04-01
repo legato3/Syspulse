@@ -157,6 +157,55 @@ func TestOnAlert(t *testing.T) {
 	}
 }
 
+func TestMigrateActiveAlert(t *testing.T) {
+	hm := newTestHistoryManager(t)
+
+	start := time.Now().Add(-10 * time.Minute)
+	hm.history = []HistoryEntry{
+		{
+			Alert: Alert{
+				ID:         "older-alert",
+				ResourceID: "pve1:node0:100",
+				Node:       "node0",
+				Instance:   "pve1",
+				StartTime:  start.Add(-5 * time.Minute),
+			},
+			Timestamp: start.Add(-5 * time.Minute),
+		},
+		{
+			Alert: Alert{
+				ID:         "pve1:node1:100-cpu",
+				ResourceID: "pve1:node1:100",
+				Node:       "node1",
+				Instance:   "pve1",
+				StartTime:  start,
+			},
+			Timestamp: start,
+		},
+	}
+
+	hm.MigrateActiveAlert("pve1:node1:100-cpu", Alert{
+		ID:         "pve1:node2:100-cpu",
+		ResourceID: "pve1:node2:100",
+		Node:       "node2",
+		Instance:   "pve1",
+		StartTime:  start,
+	})
+
+	if hm.history[0].Alert.ID != "older-alert" {
+		t.Fatalf("expected unrelated history to remain unchanged, got %q", hm.history[0].Alert.ID)
+	}
+	if hm.history[1].Alert.ID != "pve1:node2:100-cpu" {
+		t.Fatalf("expected most recent alert ID to be migrated, got %q", hm.history[1].Alert.ID)
+	}
+	if hm.history[1].Alert.ResourceID != "pve1:node2:100" {
+		t.Fatalf("expected history resource ID to migrate, got %q", hm.history[1].Alert.ResourceID)
+	}
+	if hm.history[1].Alert.Node != "node2" {
+		t.Fatalf("expected history node to migrate, got %q", hm.history[1].Alert.Node)
+	}
+}
+
 func TestGetHistory_WithLimit(t *testing.T) {
 	// t.Parallel()
 

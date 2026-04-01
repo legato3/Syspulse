@@ -148,6 +148,22 @@ func (hm *HistoryManager) UpdateAlertLastSeen(alertID string, lastSeen time.Time
 	}
 }
 
+// MigrateActiveAlert updates the most recent history entry for an in-flight
+// alert when its runtime identity changes (for example, a VM moves nodes and
+// its node-scoped alert ID changes). This preserves a single history record so
+// the eventual resolution updates the correct entry.
+func (hm *HistoryManager) MigrateActiveAlert(oldAlertID string, updated Alert) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	for i := len(hm.history) - 1; i >= 0; i-- {
+		if hm.history[i].Alert.ID == oldAlertID {
+			hm.history[i].Alert = *updated.Clone()
+			return
+		}
+	}
+}
+
 // GetHistory returns alert history within the specified time range
 func (hm *HistoryManager) GetHistory(since time.Time, limit int) []Alert {
 	hm.mu.RLock()

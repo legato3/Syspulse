@@ -5341,6 +5341,36 @@ func BuildGuestKey(instance, node string, vmid int) string {
 	return fmt.Sprintf("%s:%s:%d", instance, node, vmid)
 }
 
+func isGuestMetricResourceType(resourceType string) bool {
+	switch strings.TrimSpace(resourceType) {
+	case "VM", "Container":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseGuestAlertVMID(resourceID string) (int, bool) {
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceID == "" {
+		return 0, false
+	}
+
+	if idx := strings.LastIndex(resourceID, ":"); idx >= 0 && idx < len(resourceID)-1 {
+		if vmid, err := strconv.Atoi(resourceID[idx+1:]); err == nil {
+			return vmid, true
+		}
+	}
+
+	if idx := strings.LastIndex(resourceID, "-"); idx >= 0 && idx < len(resourceID)-1 {
+		if vmid, err := strconv.Atoi(resourceID[idx+1:]); err == nil {
+			return vmid, true
+		}
+	}
+
+	return 0, false
+}
+
 func storageOverrideLookupKeys(storage models.Storage) []string {
 	keys := make([]string, 0, 1+len(storage.NodeIDs)+len(storage.Nodes))
 	seen := make(map[string]struct{})
@@ -6688,6 +6718,14 @@ func (m *Manager) checkMetric(resourceID, resourceName, node, instance, resource
 	defer m.mu.Unlock()
 
 	existingAlert, exists := m.activeAlerts[alertID]
+	migratedAlertIdentity := false
+	if !exists && isGuestMetricResourceType(resourceType) {
+		if migrated := m.migrateGuestMetricAlertNoLock(alertID, resourceID, resourceName, node, instance, metricType); migrated != nil {
+			existingAlert = migrated
+			exists = true
+			migratedAlertIdentity = true
+		}
+	}
 	monitorOnly := opts != nil && opts.MonitorOnly
 
 	// Check for suppression
@@ -7018,6 +7056,100 @@ func (m *Manager) checkMetric(resourceID, resourceName, node, instance, resource
 			}
 		}
 	}
+
+	if migratedAlertIdentity {
+		m.saveActiveAlertsAsync("guest-alert-node-move")
+	}
+}
+
+func (m *Manager) migrateGuestMetricAlertNoLock(alertID, resourceID, resourceName, node, instance, metricType string) *Alert {
+	currentVMID, ok := parseGuestAlertVMID(resourceID)
+	if !ok {
+		return nil
+	}
+
+	normalizedInstance := strings.TrimSpace(instance)
+	for existingID, alert := range m.activeAlerts {
+		if existingID == alertID || alert == nil {
+			continue
+		}
+		if alert.Type != metricType {
+			continue
+		}
+		if strings.TrimSpace(alert.Instance) != normalizedInstance {
+			continue
+		}
+
+		alertVMID, ok := parseGuestAlertVMID(alert.ResourceID)
+		if !ok || alertVMID != currentVMID {
+			continue
+		}
+
+		oldAlertID := alert.ID
+		delete(m.activeAlerts, existingID)
+
+		alert.ID = alertID
+		alert.ResourceID = resourceID
+		alert.ResourceName = resourceName
+		alert.Node = node
+		alert.Instance = instance
+		if dn := m.resolveNodeDisplayName(instance, node); dn != "" {
+			alert.NodeDisplayName = dn
+		} else {
+			alert.NodeDisplayName = ""
+		}
+
+		m.activeAlerts[alertID] = alert
+		m.moveAlertTrackingStateNoLock(oldAlertID, alertID, alert)
+
+		log.Info().
+			Str("oldAlertID", oldAlertID).
+			Str("newAlertID", alertID).
+			Str("resource", resourceName).
+			Str("metric", metricType).
+			Msg("Migrated guest alert to current node identity")
+
+		return alert
+	}
+
+	return nil
+}
+
+func (m *Manager) moveAlertTrackingStateNoLock(oldAlertID, newAlertID string, alert *Alert) {
+	if oldAlertID == "" || newAlertID == "" || oldAlertID == newAlertID || alert == nil {
+		return
+	}
+
+	if pending, exists := m.pendingAlerts[oldAlertID]; exists {
+		delete(m.pendingAlerts, oldAlertID)
+		m.pendingAlerts[newAlertID] = pending
+	}
+	if recent, exists := m.recentAlerts[oldAlertID]; exists {
+		delete(m.recentAlerts, oldAlertID)
+		m.recentAlerts[newAlertID] = recent
+	}
+	if until, exists := m.suppressedUntil[oldAlertID]; exists {
+		delete(m.suppressedUntil, oldAlertID)
+		m.suppressedUntil[newAlertID] = until
+	}
+	if rateLimit, exists := m.alertRateLimit[oldAlertID]; exists {
+		delete(m.alertRateLimit, oldAlertID)
+		m.alertRateLimit[newAlertID] = rateLimit
+	}
+	if ack, exists := m.ackState[oldAlertID]; exists {
+		delete(m.ackState, oldAlertID)
+		m.ackState[newAlertID] = ack
+	}
+	if flapping, exists := m.flappingHistory[oldAlertID]; exists {
+		delete(m.flappingHistory, oldAlertID)
+		m.flappingHistory[newAlertID] = flapping
+	}
+	if active, exists := m.flappingActive[oldAlertID]; exists {
+		delete(m.flappingActive, oldAlertID)
+		m.flappingActive[newAlertID] = active
+	}
+
+	m.historyManager.MigrateActiveAlert(oldAlertID, *alert)
 }
 
 func sanitizeAlertKey(label string) string {

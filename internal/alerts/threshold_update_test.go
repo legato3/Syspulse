@@ -219,6 +219,154 @@ func TestReevaluateActiveAlertsStillAboveThreshold(t *testing.T) {
 	}
 }
 
+func TestCheckMetricMigratesGuestAlertAcrossNodeMove(t *testing.T) {
+	manager := newTestManager(t)
+	manager.ClearActiveAlerts()
+
+	oldResourceID := BuildGuestKey("pve1", "node1", 101)
+	newResourceID := BuildGuestKey("pve1", "node2", 101)
+	oldAlertID := oldResourceID + "-cpu"
+	newAlertID := newResourceID + "-cpu"
+	start := time.Now().Add(-10 * time.Minute)
+	ackTime := start.Add(1 * time.Minute)
+
+	alert := &Alert{
+		ID:           oldAlertID,
+		Type:         "cpu",
+		Level:        AlertLevelWarning,
+		ResourceID:   oldResourceID,
+		ResourceName: "vm101",
+		Node:         "node1",
+		Instance:     "pve1",
+		Message:      "VM cpu at 95%",
+		Value:        95,
+		Threshold:    80,
+		StartTime:    start,
+		LastSeen:     start.Add(5 * time.Minute),
+		Acknowledged: true,
+		AckUser:      "tester",
+		AckTime:      &ackTime,
+	}
+
+	manager.mu.Lock()
+	manager.activeAlerts[oldAlertID] = alert
+	manager.recentAlerts[oldAlertID] = alert
+	manager.suppressedUntil[oldAlertID] = start.Add(2 * time.Minute)
+	manager.alertRateLimit[oldAlertID] = []time.Time{start.Add(30 * time.Second)}
+	manager.ackState[oldAlertID] = ackRecord{
+		acknowledged: true,
+		user:         "tester",
+		time:         ackTime,
+	}
+	manager.flappingHistory[oldAlertID] = []time.Time{start.Add(45 * time.Second)}
+	manager.flappingActive[oldAlertID] = true
+	manager.historyManager.AddAlert(*alert)
+	manager.mu.Unlock()
+
+	manager.checkMetric(newResourceID, "vm101", "node2", "pve1", "VM", "cpu", 92, &HysteresisThreshold{Trigger: 80, Clear: 70}, nil)
+
+	manager.mu.RLock()
+	migrated, exists := manager.activeAlerts[newAlertID]
+	_, oldExists := manager.activeAlerts[oldAlertID]
+	_, oldAckExists := manager.ackState[oldAlertID]
+	newAck, newAckExists := manager.ackState[newAlertID]
+	_, oldSuppressed := manager.suppressedUntil[oldAlertID]
+	_, newSuppressed := manager.suppressedUntil[newAlertID]
+	_, oldRateLimit := manager.alertRateLimit[oldAlertID]
+	_, newRateLimit := manager.alertRateLimit[newAlertID]
+	_, oldFlapping := manager.flappingHistory[oldAlertID]
+	_, newFlapping := manager.flappingHistory[newAlertID]
+	manager.mu.RUnlock()
+
+	if oldExists {
+		t.Fatal("expected old node-scoped alert to be removed")
+	}
+	if !exists {
+		t.Fatal("expected alert to migrate to the current node-scoped ID")
+	}
+	if migrated.Node != "node2" || migrated.ResourceID != newResourceID {
+		t.Fatalf("expected migrated alert to target node2, got node=%q resource=%q", migrated.Node, migrated.ResourceID)
+	}
+	if !migrated.Acknowledged || migrated.AckUser != "tester" {
+		t.Fatalf("expected migrated alert acknowledgment to be preserved, got %#v", migrated)
+	}
+	if migrated.StartTime != start {
+		t.Fatalf("expected migrated alert start time to be preserved, got %v want %v", migrated.StartTime, start)
+	}
+	if oldAckExists || !newAckExists || !newAck.acknowledged {
+		t.Fatalf("expected ack state to move to new alert ID, old=%v new=%v", oldAckExists, newAckExists)
+	}
+	if oldSuppressed || !newSuppressed {
+		t.Fatalf("expected suppression window to move to new alert ID, old=%v new=%v", oldSuppressed, newSuppressed)
+	}
+	if oldRateLimit || !newRateLimit {
+		t.Fatalf("expected rate limit state to move to new alert ID, old=%v new=%v", oldRateLimit, newRateLimit)
+	}
+	if oldFlapping || !newFlapping {
+		t.Fatalf("expected flapping state to move to new alert ID, old=%v new=%v", oldFlapping, newFlapping)
+	}
+
+	history := manager.historyManager.GetAllHistory(1)
+	if len(history) != 1 || history[0].ID != newAlertID {
+		t.Fatalf("expected history entry to follow migrated alert ID, got %#v", history)
+	}
+}
+
+func TestCheckMetricResolvesGuestAlertAfterNodeMove(t *testing.T) {
+	manager := newTestManager(t)
+	manager.ClearActiveAlerts()
+
+	oldResourceID := BuildGuestKey("pve1", "node1", 202)
+	newResourceID := BuildGuestKey("pve1", "node2", 202)
+	oldAlertID := oldResourceID + "-cpu"
+	newAlertID := newResourceID + "-cpu"
+	start := time.Now().Add(-15 * time.Minute)
+
+	alert := &Alert{
+		ID:           oldAlertID,
+		Type:         "cpu",
+		Level:        AlertLevelWarning,
+		ResourceID:   oldResourceID,
+		ResourceName: "vm202",
+		Node:         "node1",
+		Instance:     "pve1",
+		Message:      "VM cpu at 95%",
+		Value:        95,
+		Threshold:    80,
+		StartTime:    start,
+		LastSeen:     start.Add(10 * time.Minute),
+	}
+
+	manager.mu.Lock()
+	manager.activeAlerts[oldAlertID] = alert
+	manager.historyManager.AddAlert(*alert)
+	manager.mu.Unlock()
+
+	manager.checkMetric(newResourceID, "vm202", "node2", "pve1", "VM", "cpu", 5, &HysteresisThreshold{Trigger: 80, Clear: 70}, nil)
+
+	manager.mu.RLock()
+	_, oldExists := manager.activeAlerts[oldAlertID]
+	_, newExists := manager.activeAlerts[newAlertID]
+	manager.mu.RUnlock()
+
+	if oldExists || newExists {
+		t.Fatalf("expected migrated guest alert to resolve after node move, old=%v new=%v", oldExists, newExists)
+	}
+
+	resolved := manager.GetResolvedAlert(newAlertID)
+	if resolved == nil || resolved.Alert == nil {
+		t.Fatal("expected resolved alert to be recorded under the current node-scoped ID")
+	}
+	if resolved.Alert.ResourceID != newResourceID {
+		t.Fatalf("expected resolved alert resource ID %q, got %q", newResourceID, resolved.Alert.ResourceID)
+	}
+
+	history := manager.historyManager.GetAllHistory(1)
+	if len(history) != 1 || history[0].ID != newAlertID {
+		t.Fatalf("expected history entry to resolve under migrated alert ID, got %#v", history)
+	}
+}
+
 func TestReevaluateActiveStorageAlertsOnThresholdChange(t *testing.T) {
 	manager := NewManager()
 
@@ -345,9 +493,9 @@ func TestReevaluateActiveAlertsGuestUsesStableClusterOverrideAcrossNodeMove(t *t
 		GuestDefaults: ThresholdConfig{
 			Memory: &HysteresisThreshold{Trigger: 85, Clear: 80},
 		},
-		NodeDefaults:    ThresholdConfig{},
-		StorageDefault:  HysteresisThreshold{Trigger: 85, Clear: 80},
-		Overrides:       map[string]ThresholdConfig{"pve1-101": {Memory: &HysteresisThreshold{Trigger: 95, Clear: 90}}},
+		NodeDefaults:   ThresholdConfig{},
+		StorageDefault: HysteresisThreshold{Trigger: 85, Clear: 80},
+		Overrides:      map[string]ThresholdConfig{"pve1-101": {Memory: &HysteresisThreshold{Trigger: 95, Clear: 90}}},
 	}
 	manager.UpdateConfig(config)
 
