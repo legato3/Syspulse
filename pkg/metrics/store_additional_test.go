@@ -55,7 +55,7 @@ func TestStoreWriteBatchSync(t *testing.T) {
 	}
 	defer store.Close()
 
-	ts := time.Unix(1000, 0)
+	ts := time.Now().UTC().Truncate(time.Second)
 	metrics := []WriteMetric{
 		{ResourceType: "vm", ResourceID: "v1", MetricType: "cpu", Value: 10.0, Timestamp: ts, Tier: TierRaw},
 		{ResourceType: "vm", ResourceID: "v1", MetricType: "mem", Value: 50.0, Timestamp: ts, Tier: TierRaw},
@@ -181,4 +181,51 @@ func TestStoreFlushMakesQueuedWritesVisible(t *testing.T) {
 	if len(points) != 1 || points[0].Value != 42 {
 		t.Fatalf("expected flushed metric to be immediately visible, got %v", points)
 	}
+}
+
+func TestNewStoreDefersStartupMaintenance(t *testing.T) {
+	previousHook := startupMaintenanceHook
+	defer func() {
+		startupMaintenanceHook = previousHook
+	}()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	startupMaintenanceHook = func() {
+		close(started)
+		<-release
+	}
+
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	cfg.FlushInterval = time.Hour
+
+	done := make(chan struct{})
+	var (
+		store *Store
+		err   error
+	)
+	go func() {
+		store, err = NewStore(cfg)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("NewStore blocked on startup maintenance")
+	}
+
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("startup maintenance was not scheduled")
+	}
+
+	close(release)
+	defer store.Close()
 }

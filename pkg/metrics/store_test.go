@@ -22,7 +22,7 @@ func TestStoreWriteBatchAndQuery(t *testing.T) {
 	}
 	defer store.Close()
 
-	ts := time.Unix(1000, 0)
+	ts := time.Now().UTC().Truncate(time.Second)
 	store.writeBatch([]bufferedMetric{
 		{resourceType: "vm", resourceID: "vm-101", metricType: "cpu", value: 1.5, timestamp: ts, tier: TierRaw},
 		{resourceType: "vm", resourceID: "vm-101", metricType: "cpu", value: 2.5, timestamp: ts.Add(1 * time.Second), tier: TierRaw},
@@ -78,7 +78,7 @@ func TestStoreSelectTierAndStats(t *testing.T) {
 	}
 
 	// Insert one point for each tier to verify stats aggregation.
-	ts := int64(1000)
+	ts := time.Now().UTC().Unix()
 	_, err = store.db.Exec(
 		`INSERT INTO metrics (resource_type, resource_id, metric_type, value, timestamp, tier) VALUES
 		('vm','vm-101','cpu',1.0,?, 'raw'),

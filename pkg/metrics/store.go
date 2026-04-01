@@ -78,6 +78,12 @@ type writeRequest struct {
 	done    chan struct{}
 }
 
+type maintenanceRequest struct {
+	run func()
+}
+
+var startupMaintenanceHook func()
+
 // WriteMetric represents a metric sample to be written synchronously.
 type WriteMetric struct {
 	ResourceType string
@@ -98,10 +104,11 @@ type Store struct {
 	buffer   []bufferedMetric
 
 	// Background workers
-	writeCh  chan writeRequest
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	stopOnce sync.Once
+	writeCh       chan writeRequest
+	maintenanceCh chan maintenanceRequest
+	stopCh        chan struct{}
+	doneCh        chan struct{}
+	stopOnce      sync.Once
 }
 
 // NewStore creates a new metrics store with the given configuration
@@ -141,12 +148,13 @@ func NewStore(config StoreConfig) (*Store, error) {
 	db.SetConnMaxLifetime(0)
 
 	store := &Store{
-		db:      db,
-		config:  config,
-		buffer:  make([]bufferedMetric, 0, config.WriteBufferSize),
-		writeCh: make(chan writeRequest, 100), // Buffer for write batches
-		stopCh:  make(chan struct{}),
-		doneCh:  make(chan struct{}),
+		db:            db,
+		config:        config,
+		buffer:        make([]bufferedMetric, 0, config.WriteBufferSize),
+		writeCh:       make(chan writeRequest, 100), // Buffer for write batches
+		maintenanceCh: make(chan maintenanceRequest, 1),
+		stopCh:        make(chan struct{}),
+		doneCh:        make(chan struct{}),
 	}
 
 	// Initialize schema
@@ -155,18 +163,9 @@ func NewStore(config StoreConfig) (*Store, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
-	// Clean up stale data from previous runs before starting the background worker.
-	// This prevents accumulation if Pulse was restarted before hourly retention ran.
-	// Runs BEFORE auto-vacuum migration so the VACUUM operates on a much smaller
-	// dataset (e.g. 60MB of live data instead of 5GB of stale + live).
-	store.runRetention()
-
-	// Migrate existing databases to incremental auto-vacuum. This is a one-time
-	// operation that restructures the file so deleted pages can be reclaimed.
-	store.migrateAutoVacuum()
-
 	// Start background workers
 	go store.backgroundWorker()
+	store.enqueueMaintenance(store.runStartupMaintenance)
 
 	log.Info().
 		Str("path", config.DBPath).
@@ -382,6 +381,35 @@ func (s *Store) enqueueWrite(req writeRequest) {
 			close(req.done)
 		}
 	}
+}
+
+func (s *Store) enqueueMaintenance(run func()) {
+	if run == nil {
+		return
+	}
+
+	select {
+	case s.maintenanceCh <- maintenanceRequest{run: run}:
+	default:
+		log.Debug().Msg("Metrics maintenance queue full, skipping duplicate request")
+	}
+}
+
+func (s *Store) runStartupMaintenance() {
+	start := time.Now()
+	if startupMaintenanceHook != nil {
+		startupMaintenanceHook()
+	}
+
+	// Clean up stale data before any deferred vacuum work so the database
+	// only restructures live rows when a long-lived installation restarts.
+	s.runRetention()
+
+	// Migrate existing databases to incremental auto-vacuum. This is a one-time
+	// operation that restructures the file so deleted pages can be reclaimed.
+	s.migrateAutoVacuum()
+
+	log.Info().Dur("duration", time.Since(start)).Msg("Deferred metrics startup maintenance completed")
 }
 
 func (s *Store) enqueueAndWait(req writeRequest) {
@@ -784,6 +812,11 @@ func (s *Store) backgroundWorker() {
 				return
 			}
 			s.processWriteRequests(s.coalesceQueuedRequests(req))
+
+		case maintenance := <-s.maintenanceCh:
+			if maintenance.run != nil {
+				maintenance.run()
+			}
 
 		case <-flushTicker.C:
 			s.flushBufferedAsync()
