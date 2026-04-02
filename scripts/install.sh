@@ -692,7 +692,7 @@ if [[ "$ENABLE_DOCKER" == "true" ]] && discover_rootless_container_runtime; then
 	fi
 fi
 
-finalize_plist_env_block()
+finalize_plist_env_block
 
 # --- Uninstall Logic ---
 if [[ "$UNINSTALL" == "true" ]]; then
