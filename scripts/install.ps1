@@ -234,7 +234,27 @@ $Url = $Url.TrimEnd('/')
 # Determine architecture
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
 $ArchParam = "windows-$Arch"
+$ServerVersion = ""
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    $versionClient = New-Object System.Net.WebClient
+    $versionClient.Headers.Add("User-Agent", "PulseInstaller/1.0")
+    $versionInfo = ($versionClient.DownloadString("$Url/api/version") | ConvertFrom-Json)
+    if ($versionInfo -and $versionInfo.version) {
+        $ServerVersion = [string]$versionInfo.version
+        Write-Host "Pulse server version: $ServerVersion" -ForegroundColor Cyan
+    }
+} catch {
+} finally {
+    if ($versionClient) { $versionClient.Dispose() }
+}
+
 $DownloadUrl = "$Url/download/pulse-agent?arch=$ArchParam"
+if (-not [string]::IsNullOrWhiteSpace($ServerVersion)) {
+    $escapedServerVersion = [Uri]::EscapeDataString($ServerVersion)
+    $DownloadUrl = "$DownloadUrl&serverVersion=$escapedServerVersion"
+}
 Write-Host "Downloading agent from $DownloadUrl..." -ForegroundColor Cyan
 
 if (-not (Test-Path $InstallDir)) {
@@ -276,6 +296,17 @@ try {
     Exit 1
 } finally {
     if ($webClient) { $webClient.Dispose() }
+}
+
+$DownloadedVersion = ""
+try {
+    $DownloadedVersion = ((& $TempPath --version 2>$null) | Select-Object -First 1).Trim()
+} catch {
+    $DownloadedVersion = ""
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ServerVersion) -and -not [string]::IsNullOrWhiteSpace($DownloadedVersion) -and $DownloadedVersion -ne $ServerVersion) {
+    Write-Host "Warning: downloaded agent version ($DownloadedVersion) does not match Pulse server version ($ServerVersion). Check that Pulse is upgraded and that any reverse proxy is not serving a stale cached binary." -ForegroundColor Yellow
 }
 
 # --- Binary Verification ---

@@ -1025,9 +1025,6 @@ esac
 # Construct arch param in format expected by download endpoint (e.g., linux-amd64)
 ARCH_PARAM="${OS}-${ARCH}"
 
-DOWNLOAD_URL="${PULSE_URL}/download/${BINARY_NAME}?arch=${ARCH_PARAM}"
-log_info "Downloading agent from ${DOWNLOAD_URL}..."
-
 # Create temp file and register for cleanup
 TMP_BIN=$(mktemp)
 TMP_FILES+=("$TMP_BIN")
@@ -1036,6 +1033,20 @@ TMP_FILES+=("$TMP_BIN")
 CURL_ARGS=(-fsSL --connect-timeout 30 --max-time 300)
 if [[ "$INSECURE" == "true" ]]; then CURL_ARGS+=(-k); fi
 if [[ -n "$CURL_CA_BUNDLE" ]]; then CURL_ARGS+=(--cacert "$CURL_CA_BUNDLE"); fi
+
+SERVER_VERSION=""
+if server_version_json="$(curl "${CURL_ARGS[@]}" "${PULSE_URL}/api/version" 2>/dev/null)"; then
+    SERVER_VERSION="$(printf '%s' "$server_version_json" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+fi
+
+DOWNLOAD_QUERY="arch=${ARCH_PARAM}"
+if [[ -n "$SERVER_VERSION" ]]; then
+    DOWNLOAD_QUERY="${DOWNLOAD_QUERY}&serverVersion=${SERVER_VERSION}"
+    log_info "Pulse server version: ${SERVER_VERSION}"
+fi
+
+DOWNLOAD_URL="${PULSE_URL}/download/${BINARY_NAME}?${DOWNLOAD_QUERY}"
+log_info "Downloading agent from ${DOWNLOAD_URL}..."
 
 if ! curl "${CURL_ARGS[@]}" -o "$TMP_BIN" "$DOWNLOAD_URL"; then
     fail "Download failed. Check URL and connectivity."
@@ -1060,6 +1071,11 @@ elif [[ "$OS" == "darwin" ]]; then
 fi
 
 chmod +x "$TMP_BIN"
+NEW_VERSION=$("$TMP_BIN" --version 2>/dev/null | head -1 || echo "unknown")
+
+if [[ -n "$SERVER_VERSION" && -n "$NEW_VERSION" && "$NEW_VERSION" != "unknown" && "$NEW_VERSION" != "$SERVER_VERSION" ]]; then
+    log_warn "Downloaded agent version (${NEW_VERSION}) does not match Pulse server version (${SERVER_VERSION}). Check that Pulse is upgraded and that any reverse proxy is not serving a stale cached binary."
+fi
 
 # --- Upgrade Detection ---
 # Check if pulse-agent is already installed and handle upgrade gracefully
@@ -1075,8 +1091,7 @@ fi
 
 if [[ -x "$UPGRADE_CHECK_BIN" ]]; then
     EXISTING_VERSION=$("$UPGRADE_CHECK_BIN" --version 2>/dev/null | head -1 || echo "unknown")
-    NEW_VERSION=$("$TMP_BIN" --version 2>/dev/null | head -1 || echo "unknown")
-    
+
     if [[ -n "$EXISTING_VERSION" && "$EXISTING_VERSION" != "unknown" ]]; then
         UPGRADE_MODE=true
         log_info "Existing installation detected: $EXISTING_VERSION"
