@@ -111,6 +111,52 @@ func TestPatrolService_TriggerPatrolForAlert(t *testing.T) {
 	}
 }
 
+func TestPatrolService_TriggerPatrolForAlert_IgnoresDisabledOrStoppedPatrol(t *testing.T) {
+	alert := &alerts.Alert{ID: "a1", Type: "cpu", ResourceID: "node1"}
+
+	t.Run("disabled patrol", func(t *testing.T) {
+		ps := NewPatrolService(nil, nil)
+		ps.adHocTrigger = make(chan *alerts.Alert, 1)
+		ps.running = true
+		ps.config.Enabled = false
+
+		ps.TriggerPatrolForAlert(alert)
+		select {
+		case <-ps.adHocTrigger:
+			t.Fatalf("expected disabled patrol to ignore alert trigger")
+		default:
+		}
+
+		tm := NewTriggerManager(TriggerManagerConfig{MaxPendingTriggers: 1})
+		ps.SetTriggerManager(tm)
+		ps.TriggerPatrolForAlert(alert)
+		if tm.GetPendingCount() != 0 {
+			t.Fatalf("expected disabled patrol to skip trigger manager queueing")
+		}
+	})
+
+	t.Run("stopped patrol", func(t *testing.T) {
+		ps := NewPatrolService(nil, nil)
+		ps.adHocTrigger = make(chan *alerts.Alert, 1)
+		ps.config.Enabled = true
+		ps.running = false
+
+		ps.TriggerPatrolForAlert(alert)
+		select {
+		case <-ps.adHocTrigger:
+			t.Fatalf("expected stopped patrol to ignore alert trigger")
+		default:
+		}
+
+		tm := NewTriggerManager(TriggerManagerConfig{MaxPendingTriggers: 1})
+		ps.SetTriggerManager(tm)
+		ps.TriggerPatrolForAlert(alert)
+		if tm.GetPendingCount() != 0 {
+			t.Fatalf("expected stopped patrol to skip trigger manager queueing")
+		}
+	})
+}
+
 func TestPatrolService_RunTargetedPatrol_Disabled(t *testing.T) {
 	ps := NewPatrolService(nil, nil)
 	ps.config.Enabled = false
