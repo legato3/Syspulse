@@ -7312,8 +7312,10 @@ func (m *Monitor) pollPVEInstance(ctx context.Context, instanceName string, clie
 			Msg("Storage fallback still running - proceeding without waiting (disk fallback may be unavailable)")
 	}
 
-	// Update nodes with storage fallback if the current disk source is the
-	// low-confidence /nodes endpoint, or if no disk source was available.
+	// Update nodes with storage fallback only when there is no node-level disk
+	// truth at all. Storage pools can estimate local capacity, but they are not
+	// a safe replacement for the node root filesystem when /nodes already
+	// returned a disk figure.
 	// Copy storageByNode under lock, then release to avoid holding during metric updates
 	storageByNodeMu.Lock()
 	localStorageByNode := make(map[string]models.Disk, len(storageByNode))
@@ -7325,7 +7327,7 @@ func (m *Monitor) pollPVEInstance(ctx context.Context, instanceName string, clie
 	for i := range modelNodes {
 		currentDiskSource := nodeDiskSources[modelNodes[i].Name]
 		if disk, exists := localStorageByNode[modelNodes[i].Name]; exists &&
-			(modelNodes[i].Disk.Total == 0 || currentDiskSource == "" || currentDiskSource == "nodes-endpoint") {
+			(modelNodes[i].Disk.Total == 0 || currentDiskSource == "") {
 			modelNodes[i].Disk = disk
 			log.Debug().
 				Str("node", modelNodes[i].Name).
