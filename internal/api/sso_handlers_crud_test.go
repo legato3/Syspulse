@@ -164,6 +164,132 @@ func TestSSOProviderCRUD(t *testing.T) {
 	assert.Nil(t, loadedConfig.GetProvider("test-oidc"))
 }
 
+func TestSSOProviderCRUD_PreservesGroupRoleMappings(t *testing.T) {
+	router, _ := setupTestRouter(t)
+
+	createPayload := config.SSOProvider{
+		ID:          "mapped-oidc",
+		Name:        "Mapped OIDC",
+		Type:        config.SSOProviderTypeOIDC,
+		GroupsClaim: "groups",
+		GroupRoleMappings: map[string]string{
+			"group-uuid": "viewer",
+		},
+		OIDC: &config.OIDCProviderConfig{
+			IssuerURL: "https://accounts.google.com",
+			ClientID:  "client-id",
+		},
+	}
+
+	body, err := json.Marshal(createPayload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/security/sso/providers", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	router.handleCreateSSOProvider(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	loadedConfig, err := router.persistence.LoadSSOConfig()
+	require.NoError(t, err)
+	stored := loadedConfig.GetProvider("mapped-oidc")
+	require.NotNil(t, stored)
+	require.Equal(t, "viewer", stored.GroupRoleMappings["group-uuid"])
+
+	req = httptest.NewRequest(http.MethodGet, "/api/security/sso/providers/mapped-oidc", nil)
+	w = httptest.NewRecorder()
+	router.handleSSOProvider(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var fetched config.SSOProvider
+	err = json.Unmarshal(w.Body.Bytes(), &fetched)
+	require.NoError(t, err)
+	require.Equal(t, "groups", fetched.GroupsClaim)
+	require.Equal(t, "viewer", fetched.GroupRoleMappings["group-uuid"])
+
+	updatePayload := config.SSOProvider{
+		ID:          "mapped-oidc",
+		Name:        "Mapped OIDC Updated",
+		Type:        config.SSOProviderTypeOIDC,
+		GroupsClaim: "groups",
+		GroupRoleMappings: map[string]string{
+			"group-uuid": "admin",
+			"group-ops":  "operator",
+		},
+		OIDC: &config.OIDCProviderConfig{
+			IssuerURL: "https://accounts.google.com",
+			ClientID:  "client-id",
+		},
+	}
+
+	body, err = json.Marshal(updatePayload)
+	require.NoError(t, err)
+
+	req = httptest.NewRequest(http.MethodPut, "/api/security/sso/providers/mapped-oidc", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	router.handleSSOProvider(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	loadedConfig, err = router.persistence.LoadSSOConfig()
+	require.NoError(t, err)
+	stored = loadedConfig.GetProvider("mapped-oidc")
+	require.NotNil(t, stored)
+	require.Equal(t, "groups", stored.GroupsClaim)
+	require.Equal(t, "admin", stored.GroupRoleMappings["group-uuid"])
+	require.Equal(t, "operator", stored.GroupRoleMappings["group-ops"])
+}
+
+func TestSSOProviderUpdate_PreservesOmittedOIDCGroupFieldsFromFlatPayload(t *testing.T) {
+	router, _ := setupTestRouter(t)
+
+	createPayload := config.SSOProvider{
+		ID:          "toggle-oidc",
+		Name:        "Toggle OIDC",
+		Type:        config.SSOProviderTypeOIDC,
+		Enabled:     true,
+		GroupsClaim: "groups",
+		GroupRoleMappings: map[string]string{
+			"group-uuid": "viewer",
+		},
+		OIDC: &config.OIDCProviderConfig{
+			IssuerURL: "https://accounts.google.com",
+			ClientID:  "client-id",
+		},
+	}
+
+	body, err := json.Marshal(createPayload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/security/sso/providers", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	router.handleCreateSSOProvider(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	stored := router.ssoConfig.GetProvider("toggle-oidc")
+	require.NotNil(t, stored)
+
+	flatPayload := providerToResponse(stored, router.config.PublicURL)
+	flatPayload.Enabled = false
+
+	body, err = json.Marshal(flatPayload)
+	require.NoError(t, err)
+
+	req = httptest.NewRequest(http.MethodPut, "/api/security/sso/providers/toggle-oidc", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	router.handleSSOProvider(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	loadedConfig, err := router.persistence.LoadSSOConfig()
+	require.NoError(t, err)
+
+	updated := loadedConfig.GetProvider("toggle-oidc")
+	require.NotNil(t, updated)
+	require.False(t, updated.Enabled)
+	require.NotNil(t, updated.OIDC)
+	require.Equal(t, "https://accounts.google.com", updated.OIDC.IssuerURL)
+	require.Equal(t, "groups", updated.GroupsClaim)
+	require.Equal(t, "viewer", updated.GroupRoleMappings["group-uuid"])
+}
+
 func TestCreateSSOProvider_Validation(t *testing.T) {
 	router, _ := setupTestRouter(t)
 

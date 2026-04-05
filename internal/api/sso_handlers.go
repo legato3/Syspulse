@@ -348,6 +348,11 @@ func (r *Router) handleUpdateSSOProvider(w http.ResponseWriter, req *http.Reques
 		writeErrorResponse(w, http.StatusBadRequest, "invalid_json", "Invalid JSON payload", nil)
 		return
 	}
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawPayload); err != nil {
+		writeErrorResponse(w, http.StatusBadRequest, "invalid_json", "Invalid JSON payload", nil)
+		return
+	}
 
 	// Ensure ID matches
 	updated.ID = providerID
@@ -400,6 +405,12 @@ func (r *Router) handleUpdateSSOProvider(w http.ResponseWriter, req *http.Reques
 	if updated.SAML == nil && existing.SAML != nil {
 		samlCopy := *existing.SAML
 		updated.SAML = &samlCopy
+	}
+	if _, ok := rawPayload["groupsClaim"]; !ok {
+		updated.GroupsClaim = existing.GroupsClaim
+	}
+	if _, ok := rawPayload["groupRoleMappings"]; !ok {
+		updated.GroupRoleMappings = cloneStringMap(existing.GroupRoleMappings)
 	}
 
 	// Preserve secrets if not provided in update
