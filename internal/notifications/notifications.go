@@ -74,6 +74,9 @@ func (n *NotificationManager) createSecureWebhookClient(timeout time.Duration) *
 
 			// Validate IP if it's already an IP
 			if ip := net.ParseIP(host); ip != nil {
+				if isUnspecifiedIP(ip) {
+					return nil, fmt.Errorf("blocked unspecified IP: %s", ip)
+				}
 				if isPrivateIP(ip) && !n.isIPInAllowlist(ip) {
 					return nil, fmt.Errorf("blocked private IP: %s", ip)
 				}
@@ -90,7 +93,12 @@ func (n *NotificationManager) createSecureWebhookClient(timeout time.Duration) *
 
 			// Find first permitted IP
 			var permittedIP net.IP
+			hasBlockedUnspecified := false
 			for _, ip := range ips {
+				if isUnspecifiedIP(ip) {
+					hasBlockedUnspecified = true
+					continue
+				}
 				if !isPrivateIP(ip) || n.isIPInAllowlist(ip) {
 					permittedIP = ip
 					break
@@ -98,6 +106,9 @@ func (n *NotificationManager) createSecureWebhookClient(timeout time.Duration) *
 			}
 
 			if permittedIP == nil {
+				if hasBlockedUnspecified {
+					return nil, fmt.Errorf("hostname %s resolves to blocked unspecified IPs", host)
+				}
 				return nil, fmt.Errorf("hostname %s resolves to blocked private IPs", host)
 			}
 
@@ -2910,6 +2921,9 @@ func (n *NotificationManager) ValidateWebhookURL(webhookURL string) error {
 	if host == "" {
 		return fmt.Errorf("webhook URL missing hostname")
 	}
+	if parsedIP := net.ParseIP(host); isUnspecifiedIP(parsedIP) {
+		return fmt.Errorf("webhook URLs pointing to unspecified addresses are not allowed")
+	}
 
 	// Block localhost and loopback addresses (SSRF protection) unless allowlisted
 	if host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "127.") {
@@ -2938,6 +2952,9 @@ func (n *NotificationManager) ValidateWebhookURL(webhookURL string) error {
 
 	// Check all resolved IPs for private ranges
 	for _, ip := range ips {
+		if isUnspecifiedIP(ip) {
+			return fmt.Errorf("webhook URL resolves to unspecified IP %s - unspecified addresses are not allowed", ip.String())
+		}
 		if isPrivateIP(ip) {
 			// Check if this private IP is in the allowlist
 			if n.isIPInAllowlist(ip) {
@@ -2984,6 +3001,10 @@ func (n *NotificationManager) validatedWebhookRequestURL(webhookURL string) (*ur
 	}
 	parsed.Fragment = ""
 	return parsed, nil
+}
+
+func isUnspecifiedIP(ip net.IP) bool {
+	return ip != nil && ip.IsUnspecified()
 }
 
 // isPrivateIP checks if an IP address is in a private range

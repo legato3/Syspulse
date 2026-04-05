@@ -391,3 +391,24 @@ func TestValidateWebhookURL_LinkLocalIPv6(t *testing.T) {
 		t.Errorf("Expected link-local error, got: %v", err)
 	}
 }
+
+func TestValidateWebhookURL_UnspecifiedVariants(t *testing.T) {
+	nm := NewNotificationManager("")
+	if err := nm.UpdateAllowedPrivateCIDRs("0.0.0.0/32,::/128"); err != nil {
+		t.Fatalf("failed to set allowlist: %v", err)
+	}
+
+	for _, webhookURL := range []string{
+		"http://0.0.0.0/webhook",
+		"http://[::]/webhook",
+	} {
+		err := nm.ValidateWebhookURL(webhookURL)
+		if err == nil {
+			t.Errorf("Expected error for unspecified URL: %s", webhookURL)
+			continue
+		}
+		if !strings.Contains(err.Error(), "unspecified") {
+			t.Errorf("Expected unspecified-address error for %s, got: %v", webhookURL, err)
+		}
+	}
+}

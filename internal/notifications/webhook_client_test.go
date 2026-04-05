@@ -231,6 +231,32 @@ func TestSecureWebhookClientDialContextBlocksHostnameWithoutAllowlist(t *testing
 	}
 }
 
+func TestSecureWebhookClientDialContextBlocksUnspecifiedIP(t *testing.T) {
+	nm := &NotificationManager{
+		lastNotified:      make(map[string]notificationRecord),
+		webhookRateLimits: make(map[string]*webhookRateLimit),
+	}
+	if err := nm.UpdateAllowedPrivateCIDRs("0.0.0.0/32,::/128"); err != nil {
+		t.Fatalf("failed to set allowlist: %v", err)
+	}
+
+	client := nm.createSecureWebhookClient(WebhookTimeout)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport == nil {
+		t.Fatalf("expected transport to be *http.Transport")
+	}
+
+	for _, addr := range []string{"0.0.0.0:80", "[::]:80"} {
+		_, err := transport.DialContext(context.Background(), "tcp", addr)
+		if err == nil {
+			t.Fatalf("expected unspecified IP %s to be blocked", addr)
+		}
+		if !strings.Contains(err.Error(), "unspecified IP") {
+			t.Fatalf("expected unspecified IP error for %s, got: %v", addr, err)
+		}
+	}
+}
+
 func TestSecureWebhookClientDialContextAllowsHostnameWithAllowlist(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
