@@ -24,6 +24,7 @@ IN_DOCKER=false
 ENABLE_AUTO_UPDATES=false
 FORCE_VERSION=""
 FORCE_CHANNEL=""
+ARCHIVE_OVERRIDE="${PULSE_ARCHIVE_PATH:-}"
 SOURCE_BRANCH="main"
 CURRENT_INSTALL_CTID=""
 CONTAINER_CREATED_FOR_CLEANUP=false
@@ -1247,6 +1248,10 @@ create_lxc_container() {
             exit 1
         fi
     fi
+
+    if [[ -n "$ARCHIVE_OVERRIDE" ]]; then
+        ARCHIVE_OVERRIDE=$(resolve_archive_override "$ARCHIVE_OVERRIDE") || exit 1
+    fi
     
     print_info "Creating container..."
     
@@ -1363,6 +1368,24 @@ create_lxc_container() {
         print_error "Failed to install dependencies in container"
         cleanup_on_error
     fi
+
+    local container_archive_source=""
+    local container_archive_dest=""
+    local container_archive_temp=false
+    local archive_requested=false
+
+    if [[ -n "$ARCHIVE_OVERRIDE" ]]; then
+        archive_requested=true
+        container_archive_source="$ARCHIVE_OVERRIDE"
+        container_archive_dest="/tmp/$(basename "$container_archive_source")"
+    elif [[ "$BUILD_FROM_SOURCE" != "true" ]]; then
+        if prefetch_pulse_archive_for_container container_archive_source; then
+            container_archive_temp=true
+            container_archive_dest="/tmp/$(basename "$container_archive_source")"
+        else
+            print_warn "Host-side Pulse archive prefetch failed; falling back to in-container download."
+        fi
+    fi
     
     # Install Pulse inside container
     print_info "Installing Pulse..."
@@ -1427,18 +1450,48 @@ create_lxc_container() {
     if [[ "$script_source" == "/tmp/pulse_install_"* ]]; then
         rm -f "$script_source"
     fi
+
+    if [[ -n "$container_archive_source" ]]; then
+        print_info "Copying Pulse release archive to container..."
+        if ! pct push $CTID "$container_archive_source" "$container_archive_dest" >/dev/null 2>&1; then
+            if [[ "$container_archive_temp" == "true" ]]; then
+                rm -f "$container_archive_source"
+            fi
+            if [[ "$archive_requested" == "true" ]]; then
+                print_error "Failed to copy Pulse release archive to container"
+                cleanup_on_error
+            fi
+            print_warn "Could not copy prefetched archive into container; falling back to in-container download."
+            container_archive_source=""
+            container_archive_dest=""
+            container_archive_temp=false
+        fi
+    fi
+
+    if [[ "$container_archive_temp" == "true" ]]; then
+        rm -f "$container_archive_source"
+    fi
     
     # Run installation with visible progress
-    local install_cmd="bash /tmp/install.sh --in-container"
+    local -a container_install_cmd=(env)
+    if [[ "$frontend_port" != "7655" ]]; then
+        container_install_cmd+=("FRONTEND_PORT=$frontend_port")
+    fi
+    container_install_cmd+=(bash /tmp/install.sh --in-container)
+    if [[ -n "$container_archive_dest" ]]; then
+        container_install_cmd+=(--archive "$container_archive_dest")
+    fi
     if [[ -n "$auto_updates_flag" ]]; then
-        install_cmd="$install_cmd $auto_updates_flag"
+        container_install_cmd+=(--enable-auto-updates)
     fi
     if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
-        install_cmd="$install_cmd --source '$SOURCE_BRANCH'"
+        container_install_cmd+=(--source "$SOURCE_BRANCH")
     fi
-    if [[ "$frontend_port" != "7655" ]]; then
-        install_cmd="FRONTEND_PORT=$frontend_port $install_cmd"
-    fi
+
+    local -a pct_install_cmd=(pct exec "$CTID" -- "${container_install_cmd[@]}")
+    local container_manual_cmd=""
+    printf -v container_manual_cmd '%q ' "${container_install_cmd[@]}"
+    container_manual_cmd="${container_manual_cmd% }"
     
     # Run installation showing output in real-time so users can see progress/errors
     # Use timeout wrapper if available
@@ -1459,23 +1512,26 @@ create_lxc_container() {
 
     if command -v timeout >/dev/null 2>&1 && [[ "$timeout_duration" -ne 0 ]]; then
         # Show output in real-time with timeout
-        timeout "$timeout_duration" pct exec $CTID -- bash -c "$install_cmd"
+        timeout "$timeout_duration" "${pct_install_cmd[@]}"
         install_status=$?
         if [[ $install_status -eq 124 ]]; then
             print_error "Installation timed out after ${timeout_duration}s"
             if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
                 print_info "Building from source can take more than 15 minutes in containers, especially on first run."
+            elif [[ -n "$container_archive_dest" ]]; then
+                print_info "The release archive was already copied into the container, so this points to an in-container install problem rather than a GitHub download failure."
             else
                 print_info "This usually happens due to network issues or GitHub rate limiting."
             fi
             print_info "You can increase or disable the timeout by setting PULSE_CONTAINER_TIMEOUT (set to 0 to disable)."
-            print_info "Then enter the container and run 'bash /tmp/install.sh' manually:"
+            print_info "Then enter the container and run:"
             print_info "  pct enter $CTID"
+            print_info "  $container_manual_cmd"
             cleanup_on_error
         fi
     else
         # Show output in real-time without timeout
-        pct exec $CTID -- bash -c "$install_cmd"
+        "${pct_install_cmd[@]}"
         install_status=$?
     fi
     
@@ -1483,7 +1539,7 @@ create_lxc_container() {
         print_error "Failed to install Pulse inside container"
         print_info "You can enter the container to investigate:"
         print_info "  pct enter $CTID"
-        print_info "  bash /tmp/install.sh"
+        print_info "  $container_manual_cmd"
         cleanup_on_error
     fi
     
@@ -2000,24 +2056,69 @@ backup_existing() {
     :
 }
 
-download_pulse() {
-    # Check if we should build from source - do this FIRST to avoid confusing version messages
-    if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
-        if ! build_from_source "$SOURCE_BRANCH"; then
-            print_error "Source build failed"
-            exit 1
-        fi
+resolve_archive_override() {
+    local archive_path="$1"
+
+    if [[ -z "$archive_path" ]]; then
+        print_error "Archive path is required"
+        return 1
+    fi
+    if [[ ! -f "$archive_path" ]]; then
+        print_error "Archive not found: $archive_path"
+        return 1
+    fi
+    if [[ ! -r "$archive_path" ]]; then
+        print_error "Archive is not readable: $archive_path"
+        return 1
+    fi
+
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$archive_path"
+    else
+        printf '%s\n' "$archive_path"
+    fi
+}
+
+infer_release_from_archive_name() {
+    local archive_name
+    archive_name=$(basename "$1")
+
+    if [[ "$archive_name" =~ ^pulse-(v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)*)-linux-(amd64|arm64|armv7)\.tar\.gz$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
         return 0
     fi
 
-    print_info "Downloading Pulse..."
+    return 1
+}
 
-    # Check for forced version first
+detect_pulse_architecture() {
+    local raw_arch="${1:-$(uname -m)}"
+
+    case $raw_arch in
+        x86_64)
+            printf 'amd64\n'
+            ;;
+        aarch64)
+            printf 'arm64\n'
+            ;;
+        armv7l)
+            printf 'armv7\n'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+resolve_target_release() {
+    if [[ -n "${LATEST_RELEASE:-}" ]]; then
+        return 0
+    fi
+
     if [[ -n "${FORCE_VERSION}" ]]; then
         LATEST_RELEASE="${FORCE_VERSION}"
         print_info "Installing specific version: $LATEST_RELEASE"
 
-        # Verify the version exists (with timeout)
         if command -v timeout >/dev/null 2>&1; then
             if ! timeout 15 curl -fsS --connect-timeout 10 --max-time 30 "https://api.github.com/repos/$GITHUB_REPO/releases/tags/$LATEST_RELEASE" > /dev/null 2>&1; then
                 print_warn "Could not verify version $LATEST_RELEASE, proceeding anyway..."
@@ -2027,308 +2128,373 @@ download_pulse() {
                 print_warn "Could not verify version $LATEST_RELEASE, proceeding anyway..."
             fi
         fi
-    else
-        # UPDATE_CHANNEL should already be set by main(), but set default if not
-        if [[ -z "${UPDATE_CHANNEL:-}" ]]; then
-            UPDATE_CHANNEL="stable"
-
-            # Allow override via command line
-            if [[ -n "${FORCE_CHANNEL}" ]]; then
-                UPDATE_CHANNEL="${FORCE_CHANNEL}"
-                print_info "Using $UPDATE_CHANNEL channel from command line"
-            elif [[ -f "$CONFIG_DIR/system.json" ]]; then
-                CONFIGURED_CHANNEL=$(cat "$CONFIG_DIR/system.json" 2>/dev/null | grep -o '"updateChannel"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/' || true)
-                if [[ "$CONFIGURED_CHANNEL" == "rc" ]]; then
-                    UPDATE_CHANNEL="rc"
-                    print_info "RC channel detected in configuration"
-                fi
-            fi
-        fi
-
-        # Get appropriate release based on channel (with timeout)
-        # Both stable and RC channels now use /releases endpoint to handle draft releases
-        if command -v timeout >/dev/null 2>&1; then
-            RELEASES_JSON=$(timeout 15 curl -s --connect-timeout 10 --max-time 30 https://api.github.com/repos/$GITHUB_REPO/releases 2>/dev/null || true)
-        else
-            RELEASES_JSON=$(curl -s --connect-timeout 10 --max-time 30 https://api.github.com/repos/$GITHUB_REPO/releases 2>/dev/null || true)
-        fi
-
-        if [[ -n "$RELEASES_JSON" ]]; then
-            if [[ "$UPDATE_CHANNEL" == "rc" ]]; then
-                # RC channel: Get latest release (including pre-releases, but skip drafts)
-                if command -v jq >/dev/null 2>&1; then
-                    LATEST_RELEASE=$(echo "$RELEASES_JSON" | jq -r '[.[] | select(.draft == false)][0].tag_name' 2>/dev/null || true)
-                else
-                    # Fallback without jq: grep for first non-draft tag_name
-                    LATEST_RELEASE=$(echo "$RELEASES_JSON" | grep -v '"draft": true' | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
-                fi
-            else
-                # Stable channel: Get latest non-draft, non-prerelease
-                if command -v jq >/dev/null 2>&1; then
-                    LATEST_RELEASE=$(echo "$RELEASES_JSON" | jq -r '[.[] | select(.draft == false and .prerelease == false)][0].tag_name' 2>/dev/null || true)
-                else
-                    # Fallback without jq: filter out both draft and prerelease
-                    LATEST_RELEASE=$(echo "$RELEASES_JSON" | awk '/"draft": true/,/"tag_name":/ {next} /"prerelease": true/,/"tag_name":/ {next} /"tag_name":/ {print; exit}' | sed -E 's/.*"([^"]+)".*/\1/' || true)
-                fi
-            fi
-        fi
-
-        # Fallback: Try direct GitHub redirect if API fails
-        if [[ -z "$LATEST_RELEASE" ]]; then
-            print_info "GitHub API unavailable, trying alternative method..."
-            local redirect_version=""
-            redirect_version=$(get_latest_release_from_redirect 2>/dev/null || true)
-            if [[ -n "$redirect_version" ]]; then
-                LATEST_RELEASE="$redirect_version"
-            fi
-        fi
-
-        # Final fallback: Use a known good version
-        if [[ -z "$LATEST_RELEASE" ]]; then
-            print_warn "Could not determine latest release from GitHub, using fallback version"
-            LATEST_RELEASE="v4.5.1"  # Known stable version as fallback
-        fi
-
-        print_info "Latest version: $LATEST_RELEASE"
+        return 0
     fi
-    
+
+    if [[ -z "${UPDATE_CHANNEL:-}" ]]; then
+        UPDATE_CHANNEL="stable"
+
+        if [[ -n "${FORCE_CHANNEL}" ]]; then
+            UPDATE_CHANNEL="${FORCE_CHANNEL}"
+            print_info "Using $UPDATE_CHANNEL channel from command line"
+        elif [[ -f "$CONFIG_DIR/system.json" ]]; then
+            CONFIGURED_CHANNEL=$(cat "$CONFIG_DIR/system.json" 2>/dev/null | grep -o '"updateChannel"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/' || true)
+            if [[ "$CONFIGURED_CHANNEL" == "rc" ]]; then
+                UPDATE_CHANNEL="rc"
+                print_info "RC channel detected in configuration"
+            fi
+        fi
+    fi
+
+    local releases_json=""
+    if command -v timeout >/dev/null 2>&1; then
+        releases_json=$(timeout 15 curl -s --connect-timeout 10 --max-time 30 "https://api.github.com/repos/$GITHUB_REPO/releases" 2>/dev/null || true)
+    else
+        releases_json=$(curl -s --connect-timeout 10 --max-time 30 "https://api.github.com/repos/$GITHUB_REPO/releases" 2>/dev/null || true)
+    fi
+
+    if [[ -n "$releases_json" ]]; then
+        if [[ "$UPDATE_CHANNEL" == "rc" ]]; then
+            if command -v jq >/dev/null 2>&1; then
+                LATEST_RELEASE=$(echo "$releases_json" | jq -r '[.[] | select(.draft == false)][0].tag_name' 2>/dev/null || true)
+            else
+                LATEST_RELEASE=$(echo "$releases_json" | grep -v '"draft": true' | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+            fi
+        else
+            if command -v jq >/dev/null 2>&1; then
+                LATEST_RELEASE=$(echo "$releases_json" | jq -r '[.[] | select(.draft == false and .prerelease == false)][0].tag_name' 2>/dev/null || true)
+            else
+                LATEST_RELEASE=$(echo "$releases_json" | awk '/"draft": true/,/"tag_name":/ {next} /"prerelease": true/,/"tag_name":/ {next} /"tag_name":/ {print; exit}' | sed -E 's/.*"([^"]+)".*/\1/' || true)
+            fi
+        fi
+    fi
+
+    if [[ -z "$LATEST_RELEASE" ]]; then
+        print_info "GitHub API unavailable, trying alternative method..."
+        local redirect_version=""
+        redirect_version=$(get_latest_release_from_redirect 2>/dev/null || true)
+        if [[ -n "$redirect_version" ]]; then
+            LATEST_RELEASE="$redirect_version"
+        fi
+    fi
+
+    if [[ -z "$LATEST_RELEASE" ]]; then
+        print_warn "Could not determine latest release from GitHub, using fallback version"
+        LATEST_RELEASE="v4.5.1"
+    fi
+
+    print_info "Latest version: $LATEST_RELEASE"
+}
+
+download_release_archive() {
+    local release="$1"
+    local pulse_arch="$2"
+    local archive_path="$3"
+
+    local archive_name="pulse-${release}-linux-${pulse_arch}.tar.gz"
+    local download_url="https://github.com/$GITHUB_REPO/releases/download/$release/${archive_name}"
+    local checksums_url="https://github.com/$GITHUB_REPO/releases/download/$release/checksums.txt"
+    local expected_checksum=""
+    local actual_checksum=""
+    local checksum_file=""
+    local checksum_url=""
+
+    DOWNLOAD_URL="$download_url"
+    print_info "Downloading from: $DOWNLOAD_URL"
+
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        print_error "sha256sum is required but not installed"
+        return 1
+    fi
+
+    if ! wget -q --timeout=60 --tries=2 -O "$archive_path" "$download_url"; then
+        print_error "Failed to download Pulse release"
+        print_info "This can happen due to network issues or GitHub rate limiting"
+        print_info "You can try downloading manually from: $download_url"
+        return 1
+    fi
+
+    checksum_file=$(mktemp /tmp/pulse-checksum-XXXXXX)
+    if wget -q --timeout=60 --tries=2 -O "$checksum_file" "$checksums_url" 2>/dev/null; then
+        expected_checksum=$(grep -w "${archive_name}" "$checksum_file" 2>/dev/null | awk '{print $1}')
+    fi
+    rm -f "$checksum_file"
+
+    if [[ -z "$expected_checksum" ]]; then
+        checksum_url="${download_url}.sha256"
+        checksum_file=$(mktemp /tmp/pulse-checksum-XXXXXX)
+        if wget -q --timeout=60 --tries=2 -O "$checksum_file" "$checksum_url" 2>/dev/null; then
+            expected_checksum=$(awk '{print $1}' "$checksum_file")
+        fi
+        rm -f "$checksum_file"
+    fi
+
+    if [[ -z "$expected_checksum" ]]; then
+        print_error "Failed to download checksum for Pulse release"
+        print_info "Refusing to install without checksum verification"
+        return 1
+    fi
+
+    actual_checksum=$(sha256sum "$archive_path" | awk '{print $1}')
+    if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+        print_error "Checksum verification failed for downloaded Pulse release"
+        print_error "Expected: $expected_checksum"
+        print_error "Got: $actual_checksum"
+        return 1
+    fi
+
+    return 0
+}
+
+install_pulse_archive() {
+    local archive_path="$1"
+    local expected_release="${2:-}"
+    local temp_extract=""
+    local temp_extract2=""
+    local installed_version=""
+
+    if [[ ! -f "$archive_path" ]]; then
+        print_error "Archive not found: $archive_path"
+        return 1
+    fi
+
+    if [[ -z "$expected_release" ]]; then
+        expected_release=$(infer_release_from_archive_name "$archive_path" 2>/dev/null || true)
+    fi
+
+    temp_extract=$(mktemp -d /tmp/pulse-extract-XXXXXX)
+    if ! tar -xzf "$archive_path" -C "$temp_extract"; then
+        print_error "Failed to extract Pulse release archive"
+        rm -rf "$temp_extract"
+        return 1
+    fi
+
+    mkdir -p "$INSTALL_DIR/bin"
+
+    if [[ -f "$INSTALL_DIR/bin/pulse" ]]; then
+        mv "$INSTALL_DIR/bin/pulse" "$INSTALL_DIR/bin/pulse.old" 2>/dev/null || true
+    fi
+
+    if [[ -f "$temp_extract/bin/pulse" ]]; then
+        if ! cp "$temp_extract/bin/pulse" "$INSTALL_DIR/bin/pulse"; then
+            print_error "Failed to copy new binary to $INSTALL_DIR/bin/pulse"
+            [[ -f "$INSTALL_DIR/bin/pulse.old" ]] && mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
+            rm -rf "$temp_extract"
+            return 1
+        fi
+    elif [[ -f "$temp_extract/pulse" ]]; then
+        if ! cp "$temp_extract/pulse" "$INSTALL_DIR/bin/pulse"; then
+            print_error "Failed to copy new binary to $INSTALL_DIR/bin/pulse"
+            [[ -f "$INSTALL_DIR/bin/pulse.old" ]] && mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
+            rm -rf "$temp_extract"
+            return 1
+        fi
+    else
+        print_error "Pulse binary not found in archive"
+        [[ -f "$INSTALL_DIR/bin/pulse.old" ]] && mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
+        rm -rf "$temp_extract"
+        return 1
+    fi
+
+    if [[ ! -f "$INSTALL_DIR/bin/pulse" ]]; then
+        print_error "Binary installation failed - file not found after copy"
+        [[ -f "$INSTALL_DIR/bin/pulse.old" ]] && mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
+        rm -rf "$temp_extract"
+        return 1
+    fi
+
+    if [[ -f "$temp_extract/bin/pulse-docker-agent" ]]; then
+        cp -f "$temp_extract/bin/pulse-docker-agent" "$INSTALL_DIR/pulse-docker-agent"
+        cp -f "$temp_extract/bin/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
+        chmod +x "$INSTALL_DIR/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
+        chown pulse:pulse "$INSTALL_DIR/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
+        ln -sf "$INSTALL_DIR/bin/pulse-docker-agent" /usr/local/bin/pulse-docker-agent
+        print_success "Docker agent binary installed"
+    else
+        print_warn "Docker agent binary not found in archive; skipping installation"
+    fi
+
+    if [[ -f "$temp_extract/bin/pulse-host-agent" ]]; then
+        cp -f "$temp_extract/bin/pulse-host-agent" "$INSTALL_DIR/bin/pulse-host-agent"
+        chmod +x "$INSTALL_DIR/bin/pulse-host-agent"
+        chown pulse:pulse "$INSTALL_DIR/bin/pulse-host-agent"
+        print_success "Host agent binary installed"
+    else
+        print_warn "Host agent binary not found in archive; skipping installation"
+    fi
+
+    install_additional_agent_binaries "$expected_release" "$temp_extract"
+    deploy_agent_scripts "$temp_extract"
+
+    chmod +x "$INSTALL_DIR/bin/pulse"
+    chown -R pulse:pulse "$INSTALL_DIR"
+
+    rm -f "$INSTALL_DIR/bin/pulse.old"
+    ln -sf "$INSTALL_DIR/bin/pulse" /usr/local/bin/pulse
+    print_success "Pulse binary installed to $INSTALL_DIR/bin/pulse"
+    print_success "Symlink created at /usr/local/bin/pulse"
+
+    if [[ -f "$temp_extract/VERSION" ]]; then
+        cp "$temp_extract/VERSION" "$INSTALL_DIR/VERSION"
+        chown pulse:pulse "$INSTALL_DIR/VERSION"
+    fi
+
+    installed_version=$("$INSTALL_DIR/bin/pulse" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\.]+)?' | head -1 || echo "unknown")
+    if [[ -n "$expected_release" ]] && [[ "$installed_version" != "$expected_release" ]]; then
+        print_warn "Version verification issue: Expected $expected_release but binary reports $installed_version"
+        print_info "This can happen if the binary wasn't properly replaced. Trying to fix..."
+
+        rm -f "$INSTALL_DIR/bin/pulse"
+        temp_extract2=$(mktemp -d /tmp/pulse-extract2-XXXXXX)
+        if ! tar -xzf "$archive_path" -C "$temp_extract2"; then
+            print_warn "Failed to re-extract archive for version verification retry"
+        else
+            if [[ -f "$temp_extract2/bin/pulse" ]]; then
+                cp -f "$temp_extract2/bin/pulse" "$INSTALL_DIR/bin/pulse"
+            elif [[ -f "$temp_extract2/pulse" ]]; then
+                cp -f "$temp_extract2/pulse" "$INSTALL_DIR/bin/pulse"
+            fi
+
+            if [[ -f "$temp_extract2/bin/pulse-docker-agent" ]]; then
+                cp -f "$temp_extract2/bin/pulse-docker-agent" "$INSTALL_DIR/pulse-docker-agent"
+                cp -f "$temp_extract2/bin/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
+                chmod +x "$INSTALL_DIR/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
+                ln -sf "$INSTALL_DIR/bin/pulse-docker-agent" /usr/local/bin/pulse-docker-agent
+            fi
+
+            install_additional_agent_binaries "$expected_release" "$temp_extract2"
+            deploy_agent_scripts "$temp_extract2"
+
+            chmod +x "$INSTALL_DIR/bin/pulse"
+            chown -R pulse:pulse "$INSTALL_DIR"
+        fi
+        rm -rf "$temp_extract2"
+
+        installed_version=$("$INSTALL_DIR/bin/pulse" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\.]+)?' | head -1 || echo "unknown")
+        if [[ "$installed_version" == "$expected_release" ]]; then
+            print_success "Version issue resolved - now running $installed_version"
+        else
+            print_warn "Version mismatch persists. You may need to restart the service or reboot."
+        fi
+    elif [[ -n "$expected_release" ]]; then
+        print_success "Version verified: $installed_version"
+    elif [[ "$installed_version" != "unknown" ]]; then
+        print_success "Version installed: $installed_version"
+    else
+        print_warn "Installed Pulse version could not be verified"
+    fi
+
+    restore_selinux_contexts
+    rm -rf "$temp_extract"
+    return 0
+}
+
+download_pulse() {
+    if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
+        if ! build_from_source "$SOURCE_BRANCH"; then
+            print_error "Source build failed"
+            exit 1
+        fi
+        return 0
+    fi
+
     if [[ "$BUILD_FROM_SOURCE" == "true" && "$SKIP_DOWNLOAD" != "true" ]]; then
         print_error "Source build requested but download path was reached (internal error)"
         exit 1
     fi
-    
-    # Only do download if not building from source
+
     if [[ "$SKIP_DOWNLOAD" != "true" ]]; then
+        local archive_path=""
+        local expected_release=""
+        local raw_arch=""
+        local pulse_arch=""
+        local archive_from_temp=false
+        local inferred_release=""
+
         rm -f "$BUILD_FROM_SOURCE_MARKER"
-        # Detect architecture
-        ARCH=$(uname -m)
-        case $ARCH in
-            x86_64)
-                PULSE_ARCH="amd64"
-                ;;
-            aarch64)
-                PULSE_ARCH="arm64"
-                ;;
-            armv7l)
-                PULSE_ARCH="armv7"
-                ;;
-            *)
-                print_error "Unsupported architecture: $ARCH"
-                exit 1
-                ;;
-        esac
-        
-        print_info "Detected architecture: $ARCH ($PULSE_ARCH)"
-        
-        # Download architecture-specific release
-        ARCHIVE_NAME="pulse-${LATEST_RELEASE}-linux-${PULSE_ARCH}.tar.gz"
-        DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_RELEASE/${ARCHIVE_NAME}"
-        CHECKSUMS_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_RELEASE/checksums.txt"
-        print_info "Downloading from: $DOWNLOAD_URL"
-        
-        # Detect and stop existing service BEFORE downloading (to free the binary)
+
         EXISTING_SERVICE=$(detect_service_name)
         stop_pulse_service_for_update "$EXISTING_SERVICE" || true
 
-        cd /tmp
+        if [[ -n "$ARCHIVE_OVERRIDE" ]]; then
+            archive_path=$(resolve_archive_override "$ARCHIVE_OVERRIDE") || exit 1
+            inferred_release=$(infer_release_from_archive_name "$archive_path" 2>/dev/null || true)
 
-        if ! command -v sha256sum >/dev/null 2>&1; then
-            print_error "sha256sum is required but not installed"
-            exit 1
-        fi
-
-        # Download with timeout (60 seconds should be enough for ~5MB file)
-        ARCHIVE_PATH="/tmp/$ARCHIVE_NAME"
-        if ! wget -q --timeout=60 --tries=2 -O "$ARCHIVE_PATH" "$DOWNLOAD_URL"; then
-            print_error "Failed to download Pulse release"
-            print_info "This can happen due to network issues or GitHub rate limiting"
-            print_info "You can try downloading manually from: $DOWNLOAD_URL"
-            exit 1
-        fi
-
-        # Download and verify checksum (try new format first, fall back to old)
-        EXPECTED_CHECKSUM=""
-
-        # Try checksums.txt first (v4.29.0+)
-        if wget -q --timeout=60 --tries=2 -O "/tmp/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
-            EXPECTED_CHECKSUM=$(grep -w "${ARCHIVE_NAME}" /tmp/checksums.txt 2>/dev/null | awk '{print $1}')
-            rm -f /tmp/checksums.txt
-        fi
-
-        # Fall back to individual .sha256 file (v4.28.0 and earlier)
-        if [ -z "$EXPECTED_CHECKSUM" ]; then
-            CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
-            if wget -q --timeout=60 --tries=2 -O "${ARCHIVE_PATH}.sha256" "$CHECKSUM_URL" 2>/dev/null; then
-                EXPECTED_CHECKSUM=$(awk '{print $1}' "${ARCHIVE_PATH}.sha256")
-                rm -f "${ARCHIVE_PATH}.sha256"
-            fi
-        fi
-
-        # If we still don't have a checksum, fail
-        if [ -z "$EXPECTED_CHECKSUM" ]; then
-            print_error "Failed to download checksum for Pulse release"
-            print_info "Refusing to install without checksum verification"
-            exit 1
-        fi
-
-        # Verify the downloaded archive
-        ACTUAL_CHECKSUM=$(sha256sum "${ARCHIVE_PATH}" | awk '{print $1}')
-        if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
-            print_error "Checksum verification failed for downloaded Pulse release"
-            print_error "Expected: $EXPECTED_CHECKSUM"
-            print_error "Got: $ACTUAL_CHECKSUM"
-            exit 1
-        fi
-        
-        # Extract to temporary directory first
-        TEMP_EXTRACT="/tmp/pulse-extract-$$"
-        mkdir -p "$TEMP_EXTRACT"
-        tar -xzf "$ARCHIVE_PATH" -C "$TEMP_EXTRACT"
-    
-        # Ensure install directory and bin subdirectory exist
-        mkdir -p "$INSTALL_DIR/bin"
-    
-        # Copy Pulse binary to the correct location (/opt/pulse/bin/pulse)
-        # First, backup the old binary if it exists
-        if [[ -f "$INSTALL_DIR/bin/pulse" ]]; then
-            mv "$INSTALL_DIR/bin/pulse" "$INSTALL_DIR/bin/pulse.old" 2>/dev/null || true
-        fi
-    
-        if [[ -f "$TEMP_EXTRACT/bin/pulse" ]]; then
-            if ! cp "$TEMP_EXTRACT/bin/pulse" "$INSTALL_DIR/bin/pulse"; then
-                print_error "Failed to copy new binary to $INSTALL_DIR/bin/pulse"
-                # Try to restore old binary
-                if [[ -f "$INSTALL_DIR/bin/pulse.old" ]]; then
-                    mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
-                fi
+            if [[ -n "$FORCE_VERSION" ]] && [[ -n "$inferred_release" ]] && [[ "$FORCE_VERSION" != "$inferred_release" ]]; then
+                print_error "Archive version $inferred_release does not match requested version $FORCE_VERSION"
                 exit 1
             fi
-        elif [[ -f "$TEMP_EXTRACT/pulse" ]]; then
-            # Fallback for old archives (pre-v4.3.1)
-            if ! cp "$TEMP_EXTRACT/pulse" "$INSTALL_DIR/bin/pulse"; then
-                print_error "Failed to copy new binary to $INSTALL_DIR/bin/pulse"
-                # Try to restore old binary
-                if [[ -f "$INSTALL_DIR/bin/pulse.old" ]]; then
-                    mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
-                fi
+
+            if [[ -n "$FORCE_VERSION" ]]; then
+                expected_release="$FORCE_VERSION"
+            else
+                expected_release="$inferred_release"
+            fi
+
+            if [[ -n "$expected_release" ]]; then
+                LATEST_RELEASE="$expected_release"
+                print_info "Installing Pulse from local archive: $archive_path"
+                print_info "Archive version: $LATEST_RELEASE"
+            else
+                print_info "Installing Pulse from local archive: $archive_path"
+            fi
+        else
+            print_info "Downloading Pulse..."
+            resolve_target_release
+
+            raw_arch=$(uname -m)
+            pulse_arch=$(detect_pulse_architecture "$raw_arch") || {
+                print_error "Unsupported architecture: $raw_arch"
+                exit 1
+            }
+            print_info "Detected architecture: $raw_arch ($pulse_arch)"
+
+            archive_path=$(mktemp "/tmp/pulse-${LATEST_RELEASE}-${pulse_arch}-XXXXXX.tar.gz")
+            archive_from_temp=true
+            if ! download_release_archive "$LATEST_RELEASE" "$pulse_arch" "$archive_path"; then
+                rm -f "$archive_path"
                 exit 1
             fi
-        else
-            print_error "Pulse binary not found in archive"
-            # Try to restore old binary
-            if [[ -f "$INSTALL_DIR/bin/pulse.old" ]]; then
-                mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
-            fi
-            exit 1
+            expected_release="$LATEST_RELEASE"
         fi
-    
-        # Verify the new binary was copied and is executable
-        if [[ ! -f "$INSTALL_DIR/bin/pulse" ]]; then
-            print_error "Binary installation failed - file not found after copy"
-            # Try to restore old binary
-            if [[ -f "$INSTALL_DIR/bin/pulse.old" ]]; then
-                mv "$INSTALL_DIR/bin/pulse.old" "$INSTALL_DIR/bin/pulse"
+
+        if ! install_pulse_archive "$archive_path" "$expected_release"; then
+            if [[ "$archive_from_temp" == "true" ]]; then
+                rm -f "$archive_path"
             fi
             exit 1
         fi
 
-        # Install Docker agent binary for distribution
-        if [[ -f "$TEMP_EXTRACT/bin/pulse-docker-agent" ]]; then
-            cp -f "$TEMP_EXTRACT/bin/pulse-docker-agent" "$INSTALL_DIR/pulse-docker-agent"
-            cp -f "$TEMP_EXTRACT/bin/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
-            chmod +x "$INSTALL_DIR/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
-            chown pulse:pulse "$INSTALL_DIR/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
-            ln -sf "$INSTALL_DIR/bin/pulse-docker-agent" /usr/local/bin/pulse-docker-agent
-            print_success "Docker agent binary installed"
-        else
-            print_warn "Docker agent binary not found in archive; skipping installation"
+        if [[ "$archive_from_temp" == "true" ]]; then
+            rm -f "$archive_path"
         fi
+    fi
+}
 
-        # Install host agent binary for distribution
-        if [[ -f "$TEMP_EXTRACT/bin/pulse-host-agent" ]]; then
-            cp -f "$TEMP_EXTRACT/bin/pulse-host-agent" "$INSTALL_DIR/bin/pulse-host-agent"
-            chmod +x "$INSTALL_DIR/bin/pulse-host-agent"
-            chown pulse:pulse "$INSTALL_DIR/bin/pulse-host-agent"
-            print_success "Host agent binary installed"
-        else
-            print_warn "Host agent binary not found in archive; skipping installation"
-        fi
+prefetch_pulse_archive_for_container() {
+    local output_var="$1"
+    resolve_target_release
 
-        install_additional_agent_binaries "$LATEST_RELEASE" "$TEMP_EXTRACT"
+    local raw_arch=""
+    local pulse_arch=""
+    local archive_path=""
 
-        # Install all agent scripts
-        deploy_agent_scripts "$TEMP_EXTRACT"
-        
-        chmod +x "$INSTALL_DIR/bin/pulse"
-        chown -R pulse:pulse "$INSTALL_DIR"
-        
-        # Clean up old binary backup if everything succeeded
-        rm -f "$INSTALL_DIR/bin/pulse.old"
-        
-        # Create symlink in /usr/local/bin for PATH convenience
-        ln -sf "$INSTALL_DIR/bin/pulse" /usr/local/bin/pulse
-        print_success "Pulse binary installed to $INSTALL_DIR/bin/pulse"
-        print_success "Symlink created at /usr/local/bin/pulse"
-    
-        # Copy VERSION file if present
-        if [[ -f "$TEMP_EXTRACT/VERSION" ]]; then
-            cp "$TEMP_EXTRACT/VERSION" "$INSTALL_DIR/VERSION"
-            chown pulse:pulse "$INSTALL_DIR/VERSION"
-        fi
-    
-        # Verify the installed version matches what we expected
-        INSTALLED_VERSION=$("$INSTALL_DIR/bin/pulse" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\.]+)?' | head -1 || echo "unknown")
-        if [[ "$INSTALLED_VERSION" != "$LATEST_RELEASE" ]]; then
-            print_warn "Version verification issue: Expected $LATEST_RELEASE but binary reports $INSTALLED_VERSION"
-            print_info "This can happen if the binary wasn't properly replaced. Trying to fix..."
-            
-            # Force remove and recopy
-            rm -f "$INSTALL_DIR/bin/pulse"
-            if [[ -f "$ARCHIVE_PATH" ]]; then
-                # Re-extract and try again
-                TEMP_EXTRACT2="/tmp/pulse-extract2-$$"
-                mkdir -p "$TEMP_EXTRACT2"
-                tar -xzf "$ARCHIVE_PATH" -C "$TEMP_EXTRACT2"
-                
-                if [[ -f "$TEMP_EXTRACT2/bin/pulse" ]]; then
-                    cp -f "$TEMP_EXTRACT2/bin/pulse" "$INSTALL_DIR/bin/pulse"
-                elif [[ -f "$TEMP_EXTRACT2/pulse" ]]; then
-                    cp -f "$TEMP_EXTRACT2/pulse" "$INSTALL_DIR/bin/pulse"
-                fi
+    raw_arch=$(uname -m)
+    pulse_arch=$(detect_pulse_architecture "$raw_arch") || {
+        print_error "Unsupported architecture for container install: $raw_arch"
+        return 1
+    }
 
-                if [[ -f "$TEMP_EXTRACT2/bin/pulse-docker-agent" ]]; then
-                    cp -f "$TEMP_EXTRACT2/bin/pulse-docker-agent" "$INSTALL_DIR/pulse-docker-agent"
-                    cp -f "$TEMP_EXTRACT2/bin/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
-                    chmod +x "$INSTALL_DIR/pulse-docker-agent" "$INSTALL_DIR/bin/pulse-docker-agent"
-                    ln -sf "$INSTALL_DIR/bin/pulse-docker-agent" /usr/local/bin/pulse-docker-agent
-                fi
+    print_info "Prefetching Pulse release archive on Proxmox host..."
+    print_info "Detected architecture: $raw_arch ($pulse_arch)"
 
-                install_additional_agent_binaries "$LATEST_RELEASE" "$TEMP_EXTRACT2"
+    archive_path=$(mktemp "/tmp/pulse-${LATEST_RELEASE}-${pulse_arch}-lxc-XXXXXX.tar.gz")
+    if ! download_release_archive "$LATEST_RELEASE" "$pulse_arch" "$archive_path"; then
+        rm -f "$archive_path"
+        return 1
+    fi
 
-                deploy_agent_scripts "$TEMP_EXTRACT2"
-                
-                chmod +x "$INSTALL_DIR/bin/pulse"
-                chown -R pulse:pulse "$INSTALL_DIR"
-                rm -rf "$TEMP_EXTRACT2"
-                
-                # Check version again
-                INSTALLED_VERSION=$("$INSTALL_DIR/bin/pulse" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\.]+)?' | head -1 || echo "unknown")
-                if [[ "$INSTALLED_VERSION" == "$LATEST_RELEASE" ]]; then
-                    print_success "Version issue resolved - now running $INSTALLED_VERSION"
-                else
-                    print_warn "Version mismatch persists. You may need to restart the service or reboot."
-                fi
-            fi
-        else
-            print_success "Version verified: $INSTALLED_VERSION"
-        fi
-    
-        # Restore SELinux contexts for installed binaries (Fedora, RHEL, etc.)
-        restore_selinux_contexts
-
-        # Cleanup
-        rm -rf "$TEMP_EXTRACT" "$ARCHIVE_PATH"
-    fi  # End of SKIP_DOWNLOAD check
+    printf -v "$output_var" '%s' "$archive_path"
 }
 
 copy_host_agent_binaries_from_dir() {
@@ -2401,18 +2567,29 @@ copy_unified_agent_binaries_from_dir() {
 install_additional_agent_binaries() {
     local version="$1"
     local source_dir="${2:-}"
+    local local_host_installed=0
+    local local_unified_installed=0
+
+    if copy_host_agent_binaries_from_dir "$source_dir"; then
+        local_host_installed=1
+    fi
+    if copy_unified_agent_binaries_from_dir "$source_dir"; then
+        local_unified_installed=1
+    fi
 
     if [[ -z "$version" ]]; then
+        if [[ $local_host_installed -eq 1 ]]; then
+            print_success "Additional host agent binaries installed"
+        fi
+        if [[ $local_unified_installed -eq 1 ]]; then
+            print_success "Unified agent binaries installed"
+        fi
         return
     fi
 
     local docker_targets=("linux-amd64" "linux-arm64" "linux-armv7")
     local host_targets=("linux-amd64" "linux-arm64" "linux-armv7" "linux-armv6" "linux-386" "darwin-amd64" "darwin-arm64" "windows-amd64" "windows-arm64" "windows-386")
     local unified_targets=("linux-amd64" "linux-arm64" "linux-armv7" "linux-armv6" "linux-386" "darwin-amd64" "darwin-arm64" "windows-amd64" "windows-arm64" "windows-386")
-
-    # Prefer locally available agents from the extracted archive to avoid network reliance
-    copy_host_agent_binaries_from_dir "$source_dir" || true
-    copy_unified_agent_binaries_from_dir "$source_dir" || true
 
     local docker_missing_targets=()
     for target in "${docker_targets[@]}"; do
@@ -2483,7 +2660,7 @@ install_additional_agent_binaries() {
     fi
 
     local docker_installed=0
-    local host_installed=0
+    local bundle_host_installed=0
 
     # Install Docker agent binaries
     for agent_file in "$temp_dir"/bin/pulse-docker-agent-linux-*; do
@@ -2500,25 +2677,25 @@ install_additional_agent_binaries() {
 
     # Install host agent binaries (preserve symlinks for Windows targets)
     if copy_host_agent_binaries_from_dir "$temp_dir"; then
-        host_installed=1
+        bundle_host_installed=1
     fi
 
     # Install unified agent binaries (preserve symlinks for Windows targets)
-    local unified_installed=0
+    local bundle_unified_installed=0
     if copy_unified_agent_binaries_from_dir "$temp_dir"; then
-        unified_installed=1
+        bundle_unified_installed=1
     fi
 
     if [[ $docker_installed -eq 1 ]]; then
         print_success "Additional Docker agent binaries installed"
     fi
-    if [[ $host_installed -eq 1 ]]; then
+    if [[ $local_host_installed -eq 1 || $bundle_host_installed -eq 1 ]]; then
         print_success "Additional host agent binaries installed"
     fi
-    if [[ $unified_installed -eq 1 ]]; then
+    if [[ $local_unified_installed -eq 1 || $bundle_unified_installed -eq 1 ]]; then
         print_success "Unified agent binaries installed"
     fi
-    if [[ $docker_installed -eq 0 ]] && [[ $host_installed -eq 0 ]] && [[ $unified_installed -eq 0 ]]; then
+    if [[ $docker_installed -eq 0 ]] && [[ $local_host_installed -eq 0 ]] && [[ $bundle_host_installed -eq 0 ]] && [[ $local_unified_installed -eq 0 ]] && [[ $bundle_unified_installed -eq 0 ]]; then
         print_warn "No agent binaries found in universal bundle"
     fi
 
@@ -3234,21 +3411,35 @@ main() {
             print_completion
             exit 0
         fi
-        # If a specific version was requested, just update to it
-        if [[ -n "${FORCE_VERSION}" ]]; then
+        # If a specific version or local archive was requested, just install it
+        if [[ -n "${FORCE_VERSION}" ]] || [[ -n "$ARCHIVE_OVERRIDE" ]]; then
+            local requested_version="${FORCE_VERSION:-}"
+            if [[ -z "$requested_version" ]] && [[ -n "$ARCHIVE_OVERRIDE" ]]; then
+                requested_version=$(infer_release_from_archive_name "$ARCHIVE_OVERRIDE" 2>/dev/null || true)
+            fi
+
             # Determine if this is an upgrade, downgrade, or reinstall
             local action_word="Installing"
-            if [[ -n "$CURRENT_VERSION" ]] && [[ "$CURRENT_VERSION" != "unknown" ]]; then
+            if [[ -n "$requested_version" ]] && [[ -n "$CURRENT_VERSION" ]] && [[ "$CURRENT_VERSION" != "unknown" ]]; then
                 local compare_result
-                compare_versions "$FORCE_VERSION" "$CURRENT_VERSION" && compare_result=$? || compare_result=$?
+                compare_versions "$requested_version" "$CURRENT_VERSION" && compare_result=$? || compare_result=$?
                 case $compare_result in
                     0) action_word="Reinstalling" ;;
                     1) action_word="Updating to" ;;
                     2) action_word="Downgrading to" ;;
                 esac
             fi
-            print_info "${action_word} version ${FORCE_VERSION}..."
-            LATEST_RELEASE="${FORCE_VERSION}"
+
+            if [[ -n "$requested_version" ]]; then
+                LATEST_RELEASE="${requested_version}"
+                if [[ -n "$ARCHIVE_OVERRIDE" ]]; then
+                    print_info "${action_word} ${requested_version} from local archive..."
+                else
+                    print_info "${action_word} version ${requested_version}..."
+                fi
+            else
+                print_info "Installing from local archive: $ARCHIVE_OVERRIDE"
+            fi
             
             # Check if auto-updates should be offered when using --version
             # Same logic as update/reinstall paths
@@ -3766,83 +3957,109 @@ reset_pulse() {
     exit 0
 }
 
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --uninstall)
-            uninstall_pulse
-            ;;
-        --reset)
-            reset_pulse
-            ;;
-        --rc|--pre|--prerelease)
-            FORCE_CHANNEL="rc"
-            shift
-            ;;
-        --stable)
-            FORCE_CHANNEL="stable"
-            shift
-            ;;
-        --version)
-            FORCE_VERSION="$2"
-            shift 2
-            ;;
-        --in-container)
-            IN_CONTAINER=true
-            # Check if this is a Docker container (multiple detection methods)
-            if [[ -f /.dockerenv ]] || \
-               grep -q docker /proc/1/cgroup 2>/dev/null || \
-               grep -q docker /proc/self/cgroup 2>/dev/null || \
-               [[ -f /run/.containerenv ]] || \
-               [[ "${container:-}" == "docker" ]]; then
-                IN_DOCKER=true
-            fi
-            shift
-            ;;
-        --enable-auto-updates)
-            ENABLE_AUTO_UPDATES=true
-            shift
-            ;;
-        --source|--from-source|--branch)
-            BUILD_FROM_SOURCE=true
-            # Optional: specify branch
-            if [[ $# -gt 1 ]] && [[ -n "$2" ]] && [[ ! "$2" =~ ^-- ]]; then
-                SOURCE_BRANCH="$2"
-                shift 2
-            else
-                SOURCE_BRANCH="main"
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --uninstall)
+                uninstall_pulse
+                ;;
+            --reset)
+                reset_pulse
+                ;;
+            --rc|--pre|--prerelease)
+                FORCE_CHANNEL="rc"
                 shift
-            fi
-            ;;
-        -h|--help)
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Installation options:"
-            echo "  --rc, --pre        Install latest RC/pre-release version"
-            echo "  --stable           Install latest stable version (default)"
-            echo "  --version VERSION  Install specific version (e.g., v4.4.0-rc.1)"
-            echo "  --source [BRANCH]  Build and install from source (default: main)"
-            echo "  --enable-auto-updates  Enable automatic stable updates (via systemd timer)"
-            echo ""
-            echo "Management options:"
-            echo "  --reset            Reset Pulse to fresh configuration"
-            echo "  --uninstall        Completely remove Pulse from system"
-            echo ""
-            echo "  -h, --help         Show this help message"
-            exit 0
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            echo "Use --help for usage information"
-            exit 1
-            ;;
-    esac
-done
+                ;;
+            --stable)
+                FORCE_CHANNEL="stable"
+                shift
+                ;;
+            --version)
+                FORCE_VERSION="$2"
+                shift 2
+                ;;
+            --archive)
+                if [[ $# -lt 2 ]] || [[ -z "$2" ]] || [[ "$2" =~ ^-- ]]; then
+                    print_error "--archive requires a local .tar.gz path"
+                    exit 1
+                fi
+                ARCHIVE_OVERRIDE="$2"
+                shift 2
+                ;;
+            --archive=*)
+                ARCHIVE_OVERRIDE="${1#*=}"
+                if [[ -z "$ARCHIVE_OVERRIDE" ]]; then
+                    print_error "--archive requires a local .tar.gz path"
+                    exit 1
+                fi
+                shift
+                ;;
+            --in-container)
+                IN_CONTAINER=true
+                # Check if this is a Docker container (multiple detection methods)
+                if [[ -f /.dockerenv ]] || \
+                   grep -q docker /proc/1/cgroup 2>/dev/null || \
+                   grep -q docker /proc/self/cgroup 2>/dev/null || \
+                   [[ -f /run/.containerenv ]] || \
+                   [[ "${container:-}" == "docker" ]]; then
+                    IN_DOCKER=true
+                fi
+                shift
+                ;;
+            --enable-auto-updates)
+                ENABLE_AUTO_UPDATES=true
+                shift
+                ;;
+            --source|--from-source|--branch)
+                BUILD_FROM_SOURCE=true
+                # Optional: specify branch
+                if [[ $# -gt 1 ]] && [[ -n "$2" ]] && [[ ! "$2" =~ ^-- ]]; then
+                    SOURCE_BRANCH="$2"
+                    shift 2
+                else
+                    SOURCE_BRANCH="main"
+                    shift
+                fi
+                ;;
+            -h|--help)
+                echo "Usage: $0 [OPTIONS]"
+                echo ""
+                echo "Installation options:"
+                echo "  --rc, --pre        Install latest RC/pre-release version"
+                echo "  --stable           Install latest stable version (default)"
+                echo "  --version VERSION  Install specific version (e.g., v4.4.0-rc.1)"
+                echo "  --archive PATH     Install from a local Pulse release tarball"
+                echo "  --source [BRANCH]  Build and install from source (default: main)"
+                echo "  --enable-auto-updates  Enable automatic stable updates (via systemd timer)"
+                echo ""
+                echo "Management options:"
+                echo "  --reset            Reset Pulse to fresh configuration"
+                echo "  --uninstall        Completely remove Pulse from system"
+                echo ""
+                echo "  -h, --help         Show this help message"
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
 
-auto_detect_container_environment
+    if [[ "$BUILD_FROM_SOURCE" == "true" ]] && [[ -n "$ARCHIVE_OVERRIDE" ]]; then
+        print_error "--archive cannot be used with --source"
+        exit 1
+    fi
+}
 
-# Export for use in download_pulse function
-export FORCE_VERSION FORCE_CHANNEL
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    parse_args "$@"
+    auto_detect_container_environment
 
-# Run main function
-main
+    # Export for use in download_pulse function
+    export FORCE_VERSION FORCE_CHANNEL
+
+    # Run main function
+    main
+fi
