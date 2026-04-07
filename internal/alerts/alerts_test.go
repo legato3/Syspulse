@@ -15021,6 +15021,39 @@ func TestCheckHostComprehensive(t *testing.T) {
 			t.Error("expected tags in metadata")
 		}
 	})
+
+	t.Run("qualifies linked host agent alert resource names", func(t *testing.T) {
+		m := newTestManager(t)
+
+		m.mu.Lock()
+		m.config.TimeThreshold = 0
+		m.config.TimeThresholds = map[string]int{}
+		m.config.HostDefaults = ThresholdConfig{
+			CPU: &HysteresisThreshold{Trigger: 80.0, Clear: 70.0},
+		}
+		m.mu.Unlock()
+
+		host := models.Host{
+			ID:          "host1",
+			DisplayName: "Hamster",
+			Hostname:    "hamster.local",
+			LinkedVMID:  "Main:node3:101",
+			CPUUsage:    97.5,
+		}
+
+		m.CheckHost(host)
+
+		m.mu.RLock()
+		alert := m.activeAlerts["host:host1-cpu"]
+		m.mu.RUnlock()
+
+		if alert == nil {
+			t.Fatal("expected CPU alert")
+		}
+		if alert.ResourceName != "Hamster (Host Agent)" {
+			t.Fatalf("expected qualified host resource name, got %q", alert.ResourceName)
+		}
+	})
 }
 
 func TestCheckPBSComprehensive(t *testing.T) {

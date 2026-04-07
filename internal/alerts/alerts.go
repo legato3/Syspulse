@@ -2851,16 +2851,27 @@ func hostResourceID(hostID string) string {
 }
 
 func hostDisplayName(host models.Host) string {
+	base := "Host"
 	if name := strings.TrimSpace(host.DisplayName); name != "" {
-		return name
+		base = name
+	} else if name := strings.TrimSpace(host.Hostname); name != "" {
+		base = name
+	} else if host.ID != "" {
+		base = host.ID
 	}
-	if name := strings.TrimSpace(host.Hostname); name != "" {
-		return name
+
+	if strings.TrimSpace(host.LinkedNodeID) != "" ||
+		strings.TrimSpace(host.LinkedVMID) != "" ||
+		strings.TrimSpace(host.LinkedContainerID) != "" {
+		if strings.EqualFold(base, "Host") {
+			return "Host Agent"
+		}
+		if !strings.Contains(strings.ToLower(base), "host agent") {
+			return fmt.Sprintf("%s (Host Agent)", base)
+		}
 	}
-	if host.ID != "" {
-		return host.ID
-	}
-	return "Host"
+
+	return base
 }
 
 func hostInstanceName(host models.Host) string {
@@ -3067,7 +3078,7 @@ func (m *Manager) CheckHost(host models.Host) {
 				if disk.Temperature > 0 && !disk.Standby {
 					// Use specific resource ID for the disk: hostID/disk-temp:device
 					tempResourceID := fmt.Sprintf("%s/disk_temp:%s", hostResourceID(host.ID), sanitizeHostComponent(disk.Device))
-					tempResourceName := fmt.Sprintf("%s (%s Temp)", host.DisplayName, disk.Device)
+					tempResourceName := fmt.Sprintf("%s (%s Temp)", hostDisplayName(host), disk.Device)
 
 					diskTempMetadata := cloneMetadata(baseMetadata)
 					diskTempMetadata["metric"] = "diskTemperature"
