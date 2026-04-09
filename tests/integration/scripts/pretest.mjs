@@ -68,13 +68,11 @@ const waitForHealth = async (healthURL, timeoutMs = 120_000) => {
 
   const checkHealth = () => {
     return new Promise((resolve) => {
-      const req = client.get({
-        ...target,
-        agent,
-      }, (res) => {
+      const onResponse = (res) => {
         res.resume(); // Consume response data to free up memory
         resolve(res.statusCode >= 200 && res.statusCode < 300);
-      });
+      };
+      const req = agent ? client.get(target, { agent }, onResponse) : client.get(target, onResponse);
       req.on('error', () => resolve(false));
       req.setTimeout(5000, () => {
         req.destroy();
@@ -133,7 +131,7 @@ try {
   process.exit(1);
 }
 
-const baseURL = (process.env.PULSE_BASE_URL || 'http://localhost:7655').replace(/\/+$/, '');
+const baseURL = (process.env.PULSE_BASE_URL || 'http://127.0.0.1:7655').replace(/\/+$/, '');
 console.log(`[pretest] Waiting for health check at ${baseURL}/api/health...`);
 
 try {

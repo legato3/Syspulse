@@ -331,7 +331,7 @@ export async function resetTestEnvironment() {
  * Make API request to Pulse backend
  */
 export async function apiRequest(page: Page, endpoint: string, options: any = {}) {
-  const baseURL = 'http://localhost:7655';
+  const baseURL = process.env.PULSE_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:7655';
   const response = await page.request.fetch(`${baseURL}${endpoint}`, options);
   return response;
 }

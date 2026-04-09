@@ -75,7 +75,7 @@ jobs:
           docker build -t pulse-mock-github:test ./mock-github-server
 
           # Build Pulse test image
-          cd ../../
+          docker build -t pulse:test --target runtime ../../
         env:
           PULSE_LICENSE_PUBLIC_KEY: ${{ secrets.PULSE_LICENSE_PUBLIC_KEY }}
 
@@ -89,7 +89,7 @@ jobs:
         run: |
           docker compose -f docker-compose.test.yml up -d --wait
           npx playwright test tests/00-diagnostic.spec.ts --reporter=list,html
-          UPDATE_API_BASE_URL=http://localhost:7655 go test ../../tests/integration/api -run TestUpdateFlowIntegration -count=1
+          UPDATE_API_BASE_URL=http://127.0.0.1:7655 go test ../../tests/integration/api -run TestUpdateFlowIntegration -count=1
           docker compose -f docker-compose.test.yml down -v
 
       - name: Upload test results

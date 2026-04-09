@@ -35,7 +35,7 @@ export default defineConfig({
   /* Shared settings for all projects */
   use: {
     /* Base URL for all tests */
-    baseURL: process.env.PULSE_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:7655',
+    baseURL: process.env.PULSE_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:7655',
 
     /* Allow testing against self-signed TLS when explicitly enabled */
     ignoreHTTPSErrors: ['1', 'true', 'yes', 'on'].includes(
