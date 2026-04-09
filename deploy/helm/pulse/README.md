@@ -1,6 +1,6 @@
 # pulse
 
-![Version: 5.1.27-rc.3](https://img.shields.io/badge/Version-5.1.27--rc.3-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 5.1.27-rc.3](https://img.shields.io/badge/AppVersion-5.1.27--rc.3-informational?style=flat-square)
+![Version: 5.1.27](https://img.shields.io/badge/Version-5.1.27-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 5.1.27](https://img.shields.io/badge/AppVersion-5.1.27-informational?style=flat-square)
 
 Helm chart for deploying the Pulse hub and optional Docker monitoring agent.
 
