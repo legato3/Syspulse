@@ -167,7 +167,7 @@ func TestStoreFlushMakesQueuedWritesVisible(t *testing.T) {
 	}
 	defer store.Close()
 
-	ts := time.Unix(2000, 0)
+	ts := time.Now().UTC().Add(-time.Second)
 	store.Write("node", "node-1", "cpu", 42, ts)
 
 	// With a buffer size of 1, the write above is already queued asynchronously.
