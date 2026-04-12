@@ -3565,6 +3565,10 @@ func (m *Monitor) ApplyHostReport(report agentshost.Report, tokenRecord *config.
 		DiskExclude:     append([]string(nil), report.Agent.DiskExclude...),
 	}
 
+	// Normalize vendor-managed internal RAID arrays out of host state so they do
+	// not surface as customer-facing degraded storage in the UI or APIs.
+	host.RAID = models.FilterVendorManagedSystemRAIDArrays(host, host.RAID)
+
 	// Apply any pending commands execution override from server config
 	// This ensures the UI remains stable when the user toggles this setting,
 	// even if the agent hasn't yet picked up the new config in this report cycle.

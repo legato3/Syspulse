@@ -2946,50 +2946,6 @@ func sanitizeRAIDDevice(device string) string {
 	return sanitizeHostComponent(device)
 }
 
-func hostMatchesVendorHint(host models.Host, hints ...string) bool {
-	fields := []string{
-		host.Platform,
-		host.OSName,
-		host.OSVersion,
-		host.DisplayName,
-		host.Hostname,
-	}
-	for _, field := range fields {
-		value := strings.ToLower(strings.TrimSpace(field))
-		if value == "" {
-			continue
-		}
-		for _, hint := range hints {
-			if strings.Contains(value, hint) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isSynologyLikeHost(host models.Host) bool {
-	return hostMatchesVendorHint(host, "synology", "dsm")
-}
-
-func isQNAPLikeHost(host models.Host) bool {
-	return hostMatchesVendorHint(host, "qnap", "qts", "quts")
-}
-
-func shouldSuppressHostRAIDArray(host models.Host, array models.HostRAIDArray) bool {
-	deviceLower := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(array.Device, "/dev/")))
-	switch {
-	case deviceLower == "":
-		return false
-	case isSynologyLikeHost(host):
-		return deviceLower == "md0" || deviceLower == "md1"
-	case isQNAPLikeHost(host):
-		return deviceLower == "md9" || deviceLower == "md13"
-	default:
-		return false
-	}
-}
-
 func hostDiskResourceID(host models.Host, disk models.Disk) (string, string) {
 	label := strings.TrimSpace(disk.Mountpoint)
 	if label == "" {
@@ -3192,12 +3148,16 @@ func (m *Manager) CheckHost(host models.Host) {
 
 	m.cleanupHostDiskAlerts(host, seenDisks)
 
+	// Clear vendor-managed system-array alerts even when host state has already
+	// been normalized to exclude them.
+	m.clearVendorManagedHostRAIDAlerts(host)
+
 	// Check RAID arrays for degraded or failed state
 	if len(host.RAID) > 0 {
 		for _, array := range host.RAID {
 			// Skip vendor-managed system arrays that are not user-facing storage pools.
 			// Synology uses md0/md1, while QNAP uses md9/md13 for internal OS volumes.
-			if shouldSuppressHostRAIDArray(host, array) {
+			if models.IsVendorManagedSystemRAIDArray(host, array) {
 				// Still clear any existing alerts for these devices
 				alertID := fmt.Sprintf("host-%s-raid-%s", host.ID, sanitizeRAIDDevice(array.Device))
 				m.clearAlert(alertID)
@@ -3542,6 +3502,16 @@ func (m *Manager) clearHostDiskAlerts(hostID string) {
 			continue
 		}
 		m.clearAlertNoLock(alertID)
+	}
+}
+
+func (m *Manager) clearVendorManagedHostRAIDAlerts(host models.Host) {
+	if host.ID == "" {
+		return
+	}
+
+	for _, device := range models.VendorManagedSystemRAIDDevices(host) {
+		m.clearAlert(fmt.Sprintf("host-%s-raid-%s", host.ID, sanitizeRAIDDevice(device)))
 	}
 }
 

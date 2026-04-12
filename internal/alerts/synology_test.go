@@ -120,6 +120,48 @@ func TestSynologyRAIDClearing(t *testing.T) {
 	}
 }
 
+func TestSynologyFilteredRAIDStateStillClearsVendorManagedAlerts(t *testing.T) {
+	m := newTestManager(t)
+	m.ClearActiveAlerts()
+	m.mu.Lock()
+	m.config.TimeThreshold = 0
+	m.config.TimeThresholds = map[string]int{}
+	alertID := "host-syno-filtered-raid-md0"
+	m.activeAlerts[alertID] = &Alert{
+		ID:           alertID,
+		ResourceID:   alertID,
+		ResourceName: "Synology NAS - /dev/md0 (raid1)",
+		Message:      "RAID array degraded",
+	}
+	m.mu.Unlock()
+
+	host := models.Host{
+		ID:          "syno-filtered",
+		DisplayName: "Synology NAS",
+		OSName:      "Synology DSM",
+		Hostname:    "synology",
+		Status:      "online",
+		LastSeen:    time.Now(),
+		RAID: []models.HostRAIDArray{
+			{
+				Device: "/dev/md2",
+				Level:  "raid5",
+				State:  "clean",
+			},
+		},
+	}
+
+	m.CheckHost(host)
+
+	m.mu.RLock()
+	_, exists := m.activeAlerts[alertID]
+	m.mu.RUnlock()
+
+	if exists {
+		t.Error("expected stale md0 alert to be cleared even when filtered host state omits it")
+	}
+}
+
 func TestHostDisableClearsRAID(t *testing.T) {
 	m := newTestManager(t)
 	m.ClearActiveAlerts()
