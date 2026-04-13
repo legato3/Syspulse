@@ -8457,6 +8457,47 @@ func TestClearOfflineAlertNoDeadlock(t *testing.T) {
 	}
 }
 
+func TestShouldSuppressResolvedNotification(t *testing.T) {
+	t.Run("suppresses recovery when firing notification was never sent", func(t *testing.T) {
+		m := newTestManager(t)
+
+		if !m.ShouldSuppressResolvedNotification(&Alert{
+			ID:   "node1-temperature",
+			Type: "temperature",
+		}) {
+			t.Fatal("expected resolved notification suppression when LastNotified is nil")
+		}
+	})
+
+	t.Run("suppresses recovery for acknowledged alerts", func(t *testing.T) {
+		m := newTestManager(t)
+		notifiedAt := time.Now().Add(-5 * time.Minute)
+
+		if !m.ShouldSuppressResolvedNotification(&Alert{
+			ID:           "node1-temperature",
+			Type:         "temperature",
+			Acknowledged: true,
+			LastNotified: &notifiedAt,
+		}) {
+			t.Fatal("expected resolved notification suppression for acknowledged alert")
+		}
+	})
+
+	t.Run("allows recovery for notified unacknowledged alerts outside quiet hours", func(t *testing.T) {
+		m := newTestManager(t)
+		notifiedAt := time.Now().Add(-5 * time.Minute)
+
+		if m.ShouldSuppressResolvedNotification(&Alert{
+			ID:           "node1-temperature",
+			Type:         "temperature",
+			Level:        AlertLevelWarning,
+			LastNotified: &notifiedAt,
+		}) {
+			t.Fatal("expected resolved notification to be allowed")
+		}
+	})
+}
+
 func TestClearPBSOfflineAlert(t *testing.T) {
 	// t.Parallel()
 

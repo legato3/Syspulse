@@ -91,11 +91,45 @@ func TestHandleAlertResolved_QuietHoursSuppressesRecovery(t *testing.T) {
 		Service: "generic",
 	})
 	notifMgr.SetNotifyOnResolve(true)
+	notifMgr.SetGroupingWindow(0)
 
 	alertMgr := alerts.NewManager()
 	cfg := alertMgr.GetConfig()
 	cfg.Enabled = true
-	cfg.GuestDefaults.PoweredOffSeverity = alerts.AlertLevelWarning
+	cfg.ActivationState = alerts.ActivationActive
+	cfg.GuestDefaults.CPU = &alerts.HysteresisThreshold{Trigger: 80, Clear: 75}
+	cfg.MetricTimeThresholds = map[string]map[string]int{"guest": {"cpu": 0}}
+	cfg.Schedule.QuietHours.Enabled = false
+	alertMgr.UpdateConfig(cfg)
+
+	m := &Monitor{
+		alertManager:    alertMgr,
+		notificationMgr: notifMgr,
+	}
+	alertMgr.SetAlertCallback(m.handleAlertFired)
+	alertMgr.SetResolvedCallback(m.handleAlertResolved)
+
+	vm := models.VM{
+		ID:       "vm-1",
+		Name:     "test-vm",
+		Node:     "node-1",
+		Instance: "inst-1",
+		Status:   "running",
+		CPU:      0.85,
+		Memory:   models.Memory{Usage: 0},
+		Disk:     models.Disk{Usage: 0},
+	}
+
+	alertMgr.CheckGuest(vm, vm.Instance)
+	alertID := vm.ID + "-cpu"
+
+	select {
+	case <-received:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for initial firing notification webhook")
+	}
+
+	cfg = alertMgr.GetConfig()
 	cfg.Schedule.QuietHours.Enabled = true
 	cfg.Schedule.QuietHours.Timezone = "UTC"
 	cfg.Schedule.QuietHours.Days = map[string]bool{
@@ -107,35 +141,12 @@ func TestHandleAlertResolved_QuietHoursSuppressesRecovery(t *testing.T) {
 		"saturday":  true,
 		"sunday":    true,
 	}
-	now := time.Now().UTC()
-	cfg.Schedule.QuietHours.Start = now.Add(-1 * time.Hour).Format("15:04")
-	cfg.Schedule.QuietHours.End = now.Add(1 * time.Hour).Format("15:04")
+	cfg.Schedule.QuietHours.Start = "00:00"
+	cfg.Schedule.QuietHours.End = "23:59"
 	alertMgr.UpdateConfig(cfg)
 
-	m := &Monitor{
-		alertManager:    alertMgr,
-		notificationMgr: notifMgr,
-	}
-	alertMgr.SetResolvedCallback(m.handleAlertResolved)
-
-	vm := models.VM{
-		ID:       "vm-1",
-		Name:     "test-vm",
-		Node:     "node-1",
-		Instance: "inst-1",
-		Status:   "stopped",
-		Memory:   models.Memory{Usage: 0},
-		Disk:     models.Disk{Usage: 0},
-	}
-
-	// Two consecutive stopped polls are required to trigger the powered-off alert.
-	alertMgr.CheckGuest(vm, vm.Instance)
-	alertMgr.CheckGuest(vm, vm.Instance)
-
-	alertID := "guest-powered-off-" + vm.ID
-
 	// Recover while quiet hours are active.
-	vm.Status = "running"
+	vm.CPU = 0.7
 	alertMgr.CheckGuest(vm, vm.Instance)
 
 	resolved := alertMgr.GetResolvedAlert(alertID)
@@ -182,11 +193,14 @@ func TestHandleAlertResolved_SendsRecoveryOutsideQuietHours(t *testing.T) {
 		Service: "generic",
 	})
 	notifMgr.SetNotifyOnResolve(true)
+	notifMgr.SetGroupingWindow(0)
 
 	alertMgr := alerts.NewManager()
 	cfg := alertMgr.GetConfig()
 	cfg.Enabled = true
-	cfg.GuestDefaults.PoweredOffSeverity = alerts.AlertLevelWarning
+	cfg.ActivationState = alerts.ActivationActive
+	cfg.GuestDefaults.CPU = &alerts.HysteresisThreshold{Trigger: 80, Clear: 75}
+	cfg.MetricTimeThresholds = map[string]map[string]int{"guest": {"cpu": 0}}
 	cfg.Schedule.QuietHours.Enabled = false
 	alertMgr.UpdateConfig(cfg)
 
@@ -194,6 +208,7 @@ func TestHandleAlertResolved_SendsRecoveryOutsideQuietHours(t *testing.T) {
 		alertManager:    alertMgr,
 		notificationMgr: notifMgr,
 	}
+	alertMgr.SetAlertCallback(m.handleAlertFired)
 	alertMgr.SetResolvedCallback(m.handleAlertResolved)
 
 	vm := models.VM{
@@ -201,17 +216,22 @@ func TestHandleAlertResolved_SendsRecoveryOutsideQuietHours(t *testing.T) {
 		Name:     "test-vm-2",
 		Node:     "node-1",
 		Instance: "inst-1",
-		Status:   "stopped",
+		Status:   "running",
+		CPU:      0.85,
 		Memory:   models.Memory{Usage: 0},
 		Disk:     models.Disk{Usage: 0},
 	}
 
 	alertMgr.CheckGuest(vm, vm.Instance)
-	alertMgr.CheckGuest(vm, vm.Instance)
+	alertID := vm.ID + "-cpu"
 
-	alertID := "guest-powered-off-" + vm.ID
+	select {
+	case <-received:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for initial firing notification webhook")
+	}
 
-	vm.Status = "running"
+	vm.CPU = 0.7
 	alertMgr.CheckGuest(vm, vm.Instance)
 
 	select {
@@ -228,6 +248,91 @@ func TestHandleAlertResolved_SendsRecoveryOutsideQuietHours(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for resolved notification webhook")
+	}
+}
+
+func TestHandleAlertResolved_SuppressesRecoveryWhenAlertWasNeverNotified(t *testing.T) {
+	received := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		body, _ := io.ReadAll(r.Body)
+		select {
+		case received <- body:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	notifMgr := notifications.NewNotificationManagerWithDataDir("http://pulse.example", t.TempDir())
+	if err := notifMgr.UpdateAllowedPrivateCIDRs("127.0.0.1/32,::1/128"); err != nil {
+		t.Fatalf("UpdateAllowedPrivateCIDRs: %v", err)
+	}
+	notifMgr.AddWebhook(notifications.WebhookConfig{
+		ID:      "test-webhook",
+		Name:    "test-webhook",
+		URL:     srv.URL,
+		Enabled: true,
+		Service: "generic",
+	})
+	notifMgr.SetNotifyOnResolve(true)
+	notifMgr.SetGroupingWindow(0)
+
+	alertMgr := alerts.NewManager()
+	cfg := alertMgr.GetConfig()
+	cfg.Enabled = true
+	cfg.ActivationState = alerts.ActivationPending
+	cfg.GuestDefaults.CPU = &alerts.HysteresisThreshold{Trigger: 80, Clear: 75}
+	cfg.MetricTimeThresholds = map[string]map[string]int{"guest": {"cpu": 0}}
+	cfg.Schedule.QuietHours.Enabled = false
+	alertMgr.UpdateConfig(cfg)
+
+	m := &Monitor{
+		alertManager:    alertMgr,
+		notificationMgr: notifMgr,
+	}
+	alertMgr.SetResolvedCallback(m.handleAlertResolved)
+
+	vm := models.VM{
+		ID:       "vm-3",
+		Name:     "test-vm-3",
+		Node:     "node-1",
+		Instance: "inst-1",
+		Status:   "running",
+		CPU:      0.85,
+		Memory:   models.Memory{Usage: 0},
+		Disk:     models.Disk{Usage: 0},
+	}
+
+	alertMgr.CheckGuest(vm, vm.Instance)
+	alertID := vm.ID + "-cpu"
+	active := alertMgr.GetActiveAlerts()
+	if len(active) != 1 {
+		t.Fatalf("expected one active alert, got %d", len(active))
+	}
+	if active[0].LastNotified != nil {
+		t.Fatalf("expected activation-pending alert %q to have no firing notification", alertID)
+	}
+
+	vm.CPU = 0.7
+	alertMgr.CheckGuest(vm, vm.Instance)
+
+	resolved := alertMgr.GetResolvedAlert(alertID)
+	if resolved == nil || resolved.Alert == nil {
+		t.Fatalf("expected resolved alert %q to exist", alertID)
+	}
+	if !alertMgr.ShouldSuppressResolvedNotification(resolved.Alert) {
+		t.Fatalf("expected resolved notification suppression for alert %q without prior firing delivery", alertID)
+	}
+
+	select {
+	case body := <-received:
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("failed to parse unexpected webhook payload: %v", err)
+		}
+		t.Fatalf("expected resolved notification to be suppressed when no firing notification was sent, got payload %#v", payload)
+	case <-time.After(500 * time.Millisecond):
 	}
 }
 

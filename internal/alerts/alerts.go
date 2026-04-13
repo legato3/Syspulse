@@ -2270,6 +2270,22 @@ func (m *Manager) ShouldSuppressResolvedNotification(alert *Alert) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if alert.Acknowledged {
+		log.Debug().
+			Str("alertID", alert.ID).
+			Str("type", alert.Type).
+			Msg("Recovery notification suppressed for acknowledged alert")
+		return true
+	}
+
+	if alert.LastNotified == nil {
+		log.Debug().
+			Str("alertID", alert.ID).
+			Str("type", alert.Type).
+			Msg("Recovery notification suppressed because firing notification was never sent")
+		return true
+	}
+
 	suppressed, reason := m.shouldSuppressNotification(alert)
 	if suppressed {
 		log.Debug().
