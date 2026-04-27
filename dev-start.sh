@@ -1,27 +1,24 @@
 #!/bin/bash
-# Syspulse dev start — runs backend (Air hot-reload) + frontend (Vite) concurrently
+# Syspulse dev start -- builds frontend, then runs backend with Air hot-reload
 export PATH=$PATH:/usr/local/go/bin:/root/go/bin
 cd /opt/syspulse
 
-# Kill any leftover processes
-pkill -f "air" 2>/dev/null
-pkill -f "vite" 2>/dev/null
+pkill -f air 2>/dev/null
+pkill -f vite 2>/dev/null
 
-echo "Starting frontend (Vite) on port 5173..."
-cd frontend-modern && npm run dev -- --host 0.0.0.0 &
-FRONT_PID=$!
-cd ..
+echo "==> Building frontend and copying to internal/api/..."
+make frontend 2>&1
 
-echo "Starting backend (Air hot-reload) on port 7655..."
+echo ""
+echo "==> Starting backend with Air hot-reload on port 7655..."
 air &
 BACK_PID=$!
 
 echo ""
-echo "PROX-WEB Syspulse dev environment:"
-echo "  Frontend (Vite):  http://192.168.0.87:5173"
-echo "  Backend (API):    http://192.168.0.87:7655"
-echo ""
-echo "PIDs: frontend=$FRONT_PID backend=$BACK_PID"
-echo "Stop: pkill -f air; pkill -f vite"
+echo "PROX-WEB Syspulse:"
+echo "  Backend: http://192.168.0.87:7655"
+echo "  PID: $BACK_PID"
+echo "  Stop: pkill -f air"
+echo "  Logs: tail -f /opt/syspulse/tmp/build-errors.log"
 
 wait
