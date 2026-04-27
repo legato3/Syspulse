@@ -1,8 +1,7 @@
-import { Component, createSignal, createEffect, onCleanup, onMount, Show, For, createMemo } from 'solid-js';
+import { Component, createSignal, createEffect, onCleanup, Show, For, createMemo } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { AggregatedMetricPoint, ChartsAPI, HistoryTimeRange, ResourceType } from '@/api/charts';
 import { formatBytes } from '@/utils/format';
-import { hasFeature, loadLicenseStatus } from '@/stores/license';
 import { logger } from '@/utils/logger';
 import { calculateOptimalPoints } from '@/utils/downsample';
 
@@ -59,8 +58,6 @@ export const UnifiedHistoryChart: Component<UnifiedHistoryChartProps> = (props) 
         }
     };
 
-    const isLocked = createMemo(() => (range() === '30d' || range() === '90d') && !hasFeature('long_term_metrics'));
-    const lockDays = createMemo(() => (range() === '30d' ? '30' : '90'));
     const refreshIntervalMs = createMemo(() => {
         const r = range();
         switch (r) {
@@ -122,10 +119,6 @@ export const UnifiedHistoryChart: Component<UnifiedHistoryChartProps> = (props) 
     };
 
 
-    onMount(() => {
-        loadLicenseStatus();
-    });
-
     createEffect(() => {
         if (props.range) setRange(props.range);
     });
@@ -136,15 +129,9 @@ export const UnifiedHistoryChart: Component<UnifiedHistoryChartProps> = (props) 
         const resourceType = props.resourceType;
         const resourceId = props.resourceId;
         const rangeValue = props.range ?? range();
-        const locked = isLocked();
         const pointsCap = maxPoints();
 
         if (!resourceType || !resourceId) return;
-        if (locked) {
-            setLoading(false);
-            setError(null);
-            return;
-        }
 
         // Check if we need to fetch - skip if params haven't actually changed
         // This prevents redundant fetches when props change reference but not value
@@ -170,10 +157,9 @@ export const UnifiedHistoryChart: Component<UnifiedHistoryChartProps> = (props) 
         const resourceType = props.resourceType;
         const resourceId = props.resourceId;
         const rangeValue = props.range ?? range();
-        const locked = isLocked();
         const pointsCap = maxPoints();
 
-        if (!resourceType || !resourceId || locked) return;
+        if (!resourceType || !resourceId) return;
 
         // Background refresh - pass true to prevent loading spinner
         loadData(resourceType, resourceId, rangeValue, pointsCap, true);
@@ -603,21 +589,6 @@ export const UnifiedHistoryChart: Component<UnifiedHistoryChartProps> = (props) 
                     </div>
                 </Show>
 
-                <Show when={isLocked()}>
-                    <div class="absolute inset-0 z-10 flex flex-col items-center justify-center backdrop-blur-md bg-white/40 dark:bg-gray-900/40 rounded-lg">
-                        <div class="bg-indigo-600 rounded-full p-2.5 shadow-xl mb-3">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-sm font-bold text-gray-900 dark:text-white mb-1 text-center">{lockDays()}-Day History Locked</h3>
-                        <p class="text-[10px] text-gray-600 dark:text-gray-300 mb-3 text-center">
-                            Upgrade to Pulse Pro to unlock {lockDays()} days of history.
-                        </p>
-                        <a href="https://pulserelay.pro/pricing" target="_blank" class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-full shadow-lg transition-all transform hover:scale-105">Upgrade to Pro</a>
-                    </div>
-                </Show>
             </div>
 
             <Portal>

@@ -31,7 +31,6 @@ import (
 	"github.com/rcourtman/pulse-go-rewrite/internal/ai/remediation"
 	"github.com/rcourtman/pulse-go-rewrite/internal/ai/unified"
 	"github.com/rcourtman/pulse-go-rewrite/internal/config"
-	"github.com/rcourtman/pulse-go-rewrite/internal/license"
 	"github.com/rcourtman/pulse-go-rewrite/internal/metrics"
 	"github.com/rcourtman/pulse-go-rewrite/internal/monitoring"
 	"github.com/rcourtman/pulse-go-rewrite/internal/servicediscovery"
@@ -702,7 +701,7 @@ func (h *AISettingsHandler) GetAlertTriggeredAnalyzer(ctx context.Context) *ai.A
 	return nil
 }
 
-// SetLicenseHandlers sets the license handlers for Pro feature gating
+// SetLicenseHandlers sets the license handlers for compatibility.
 func (h *AISettingsHandler) SetLicenseHandlers(handlers *LicenseHandlers) {
 	h.licenseHandlers = handlers
 	// Update legacy service?
@@ -1253,18 +1252,6 @@ func (h *AISettingsHandler) HandleUpdateAISettings(w http.ResponseWriter, r *htt
 	}
 
 	if req.PatrolAutoFix != nil {
-		// Auto-fix requires Pro license with ai_autofix feature
-		if *req.PatrolAutoFix && !h.GetAIService(r.Context()).HasLicenseFeature(ai.FeatureAIAutoFix) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusPaymentRequired)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":       "license_required",
-				"message":     "Pulse Patrol Auto-Fix requires Pulse Pro",
-				"feature":     ai.FeatureAIAutoFix,
-				"upgrade_url": "https://pulserelay.pro/",
-			})
-			return
-		}
 		settings.PatrolAutoFix = *req.PatrolAutoFix
 	}
 
@@ -1279,18 +1266,6 @@ func (h *AISettingsHandler) HandleUpdateAISettings(w http.ResponseWriter, r *htt
 	if req.AutonomousMode != nil {
 		// Legacy: autonomous_mode now maps to control_level for backwards compatibility
 		if *req.AutonomousMode {
-			// Autonomous mode requires Pro license with ai_autofix feature
-			if !h.GetAIService(r.Context()).HasLicenseFeature(ai.FeatureAIAutoFix) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusPaymentRequired)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"error":       "license_required",
-					"message":     "Autonomous Mode requires Pulse Pro",
-					"feature":     ai.FeatureAIAutoFix,
-					"upgrade_url": "https://pulserelay.pro/",
-				})
-				return
-			}
 			settings.ControlLevel = config.ControlLevelAutonomous
 			settings.AutonomousMode = true
 		} else if settings.GetControlLevel() == config.ControlLevelAutonomous {
@@ -1426,18 +1401,6 @@ func (h *AISettingsHandler) HandleUpdateAISettings(w http.ResponseWriter, r *htt
 
 	// Handle alert-triggered analysis toggle
 	if req.AlertTriggeredAnalysis != nil {
-		// Alert analysis requires Pro license with ai_alerts feature
-		if *req.AlertTriggeredAnalysis && !h.GetAIService(r.Context()).HasLicenseFeature(ai.FeatureAIAlerts) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":       "license_required",
-				"message":     "Pulse Alert Analysis requires Pulse Pro",
-				"feature":     ai.FeatureAIAlerts,
-				"upgrade_url": "https://pulserelay.pro/",
-			})
-			return
-		}
 		settings.AlertTriggeredAnalysis = *req.AlertTriggeredAnalysis
 	}
 
@@ -1463,20 +1426,6 @@ func (h *AISettingsHandler) HandleUpdateAISettings(w http.ResponseWriter, r *htt
 		if !config.IsValidControlLevel(level) {
 			http.Error(w, "invalid control_level: must be read_only, controlled, or autonomous", http.StatusBadRequest)
 			return
-		}
-		// "autonomous" requires Pro license (same as autonomous_mode)
-		if level == config.ControlLevelAutonomous {
-			if !h.GetAIService(r.Context()).HasLicenseFeature(ai.FeatureAIAutoFix) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusPaymentRequired)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error":       "license_required",
-					"message":     "Autonomous control requires Pulse Pro",
-					"feature":     ai.FeatureAIAutoFix,
-					"upgrade_url": "https://pulserelay.pro/",
-				})
-				return
-			}
 		}
 		settings.ControlLevel = level
 		// Keep legacy AutonomousMode in sync to prevent fallback issues
@@ -1880,21 +1829,7 @@ func (h *AISettingsHandler) HandleExecute(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Fine-grained license checks based on UseCase
 	useCase := strings.ToLower(strings.TrimSpace(req.UseCase))
-	if useCase == "autofix" || useCase == "remediation" {
-		if !h.GetAIService(r.Context()).HasLicenseFeature(ai.FeatureAIAutoFix) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":       "license_required",
-				"message":     "Pulse Patrol Auto-Fix requires Pulse Pro",
-				"feature":     ai.FeatureAIAutoFix,
-				"upgrade_url": "https://pulserelay.pro/",
-			})
-			return
-		}
-	}
 
 	if strings.TrimSpace(req.Prompt) == "" {
 		http.Error(w, "Prompt is required", http.StatusBadRequest)
@@ -2046,21 +1981,7 @@ func (h *AISettingsHandler) HandleExecuteStream(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Fine-grained license checks based on UseCase (before SSE headers)
 	useCase := strings.ToLower(strings.TrimSpace(req.UseCase))
-	if useCase == "autofix" || useCase == "remediation" {
-		if !h.GetAIService(r.Context()).HasLicenseFeature(ai.FeatureAIAutoFix) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":       "license_required",
-				"message":     "Pulse Patrol Auto-Fix requires Pulse Pro",
-				"feature":     ai.FeatureAIAutoFix,
-				"upgrade_url": "https://pulserelay.pro/",
-			})
-			return
-		}
-	}
 
 	if strings.TrimSpace(req.Prompt) == "" {
 		http.Error(w, "Prompt is required", http.StatusBadRequest)
@@ -2267,19 +2188,6 @@ func (h *AISettingsHandler) HandleRunCommand(w http.ResponseWriter, r *http.Requ
 
 	// Require authentication
 	if !CheckAuth(h.getConfig(r.Context()), w, r) {
-		return
-	}
-
-	// Gated for AI Auto-Fix (Pro feature)
-	if !h.GetAIService(r.Context()).HasLicenseFeature(ai.FeatureAIAutoFix) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusPaymentRequired)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":       "license_required",
-			"message":     "Pulse Patrol Auto-Fix requires Pulse Pro",
-			"feature":     ai.FeatureAIAutoFix,
-			"upgrade_url": "https://pulserelay.pro/",
-		})
 		return
 	}
 
@@ -3223,8 +3131,8 @@ type PatrolStatusResponse struct {
 	FixedCount       int        `json:"fixed_count"` // Number of issues auto-fixed by Patrol
 	BlockedReason    string     `json:"blocked_reason,omitempty"`
 	BlockedAt        *time.Time `json:"blocked_at,omitempty"`
-	// License status for Pro feature gating
-	LicenseRequired bool   `json:"license_required"` // True if Pro license needed for full features
+	// License status fields kept for API compatibility.
+	LicenseRequired bool   `json:"license_required"` // Kept for API compatibility; always false.
 	LicenseStatus   string `json:"license_status"`   // "active", "expired", "grace_period", "none"
 	UpgradeURL      string `json:"upgrade_url,omitempty"`
 	Summary         struct {
@@ -3259,11 +3167,7 @@ func (h *AISettingsHandler) HandleGetPatrolStatus(w http.ResponseWriter, r *http
 	status := patrol.GetStatus()
 	summary := patrol.GetFindingsSummary()
 
-	// Determine license status for Pro feature gating
-	// GetLicenseState returns accurate state: none, active, expired, grace_period
 	licenseStatus, _ := h.GetAIService(r.Context()).GetLicenseState()
-	// Check for auto-fix feature - patrol itself is free, auto-fix requires Pro
-	hasAutoFixFeature := h.GetAIService(r.Context()).HasLicenseFeature(license.FeatureAIAutoFix)
 
 	// Get fixed count from investigation orchestrator
 	fixedCount := 0
@@ -3285,11 +3189,8 @@ func (h *AISettingsHandler) HandleGetPatrolStatus(w http.ResponseWriter, r *http
 		FixedCount:       fixedCount,
 		BlockedReason:    status.BlockedReason,
 		BlockedAt:        status.BlockedAt,
-		LicenseRequired:  !hasAutoFixFeature,
+		LicenseRequired:  false,
 		LicenseStatus:    licenseStatus,
-	}
-	if !hasAutoFixFeature {
-		response.UpgradeURL = "https://pulserelay.pro/"
 	}
 	response.Summary.Critical = summary.Critical
 	response.Summary.Warning = summary.Warning
@@ -4880,23 +4781,6 @@ func (h *AISettingsHandler) HandleListApprovals(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Check license
-	licenseState, hasFeatures := h.GetAIService(r.Context()).GetLicenseState()
-	if !h.GetAIService(r.Context()).HasLicenseFeature(license.FeatureAIAutoFix) {
-		log.Warn().
-			Str("license_state", licenseState).
-			Bool("license_features_available", hasFeatures).
-			Str("feature", license.FeatureAIAutoFix).
-			Str("data_path", h.getConfig(r.Context()).DataPath).
-			Msg("AI Auto-Fix feature not available for approvals")
-		writeErrorResponse(w, http.StatusForbidden, "license_required", "Pulse Patrol Auto-Fix feature requires Pro license", map[string]string{
-			"license_state":              licenseState,
-			"license_features_available": strconv.FormatBool(hasFeatures),
-			"feature":                    license.FeatureAIAutoFix,
-		})
-		return
-	}
-
 	store := approval.GetStore()
 	if store == nil {
 		writeErrorResponse(w, http.StatusServiceUnavailable, "not_initialized", "Approval store not initialized", nil)
@@ -4952,23 +4836,6 @@ func (h *AISettingsHandler) HandleGetApproval(w http.ResponseWriter, r *http.Req
 func (h *AISettingsHandler) HandleApproveCommand(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Check license
-	licenseState, hasFeatures := h.GetAIService(r.Context()).GetLicenseState()
-	if !h.GetAIService(r.Context()).HasLicenseFeature(license.FeatureAIAutoFix) {
-		log.Warn().
-			Str("license_state", licenseState).
-			Bool("license_features_available", hasFeatures).
-			Str("feature", license.FeatureAIAutoFix).
-			Str("data_path", h.getConfig(r.Context()).DataPath).
-			Msg("AI Auto-Fix feature not available for approvals")
-		writeErrorResponse(w, http.StatusForbidden, "license_required", "Pulse Patrol Auto-Fix feature requires Pro license", map[string]string{
-			"license_state":              licenseState,
-			"license_features_available": strconv.FormatBool(hasFeatures),
-			"feature":                    license.FeatureAIAutoFix,
-		})
 		return
 	}
 
@@ -5506,11 +5373,6 @@ func (h *AISettingsHandler) HandleGetPatrolAutonomy(w http.ResponseWriter, r *ht
 	}
 
 	autonomyLevel := cfg.GetPatrolAutonomyLevel()
-	// Clamp for free tier: assisted/full require Pro (ai_autofix)
-	hasAutoFix := aiService.HasLicenseFeature(license.FeatureAIAutoFix)
-	if !hasAutoFix && (autonomyLevel == config.PatrolAutonomyAssisted || autonomyLevel == config.PatrolAutonomyFull) {
-		autonomyLevel = config.PatrolAutonomyApproval
-	}
 
 	settings := PatrolAutonomyResponse{
 		AutonomyLevel:           autonomyLevel,
@@ -5540,19 +5402,6 @@ func (h *AISettingsHandler) HandleUpdatePatrolAutonomy(w http.ResponseWriter, r 
 	if !config.IsValidPatrolAutonomyLevel(req.AutonomyLevel) {
 		writeErrorResponse(w, http.StatusBadRequest, "invalid_autonomy_level",
 			fmt.Sprintf("Invalid autonomy level: %s. Must be 'monitor', 'approval', 'assisted', or 'full'", req.AutonomyLevel), nil)
-		return
-	}
-
-	// License-based autonomy clamping: assisted/full require Pro (ai_autofix)
-	hasAutoFix := h.GetAIService(r.Context()).HasLicenseFeature(license.FeatureAIAutoFix)
-	if !hasAutoFix && (req.AutonomyLevel == config.PatrolAutonomyAssisted || req.AutonomyLevel == config.PatrolAutonomyFull) {
-		writeErrorResponse(w, http.StatusPaymentRequired, "license_required",
-			"Auto-fix requires Pulse Pro. Free tier supports Monitor and Investigate modes.",
-			map[string]string{
-				"feature":       license.FeatureAIAutoFix,
-				"upgrade_url":   "https://pulserelay.pro/",
-				"allowed_modes": "monitor,approval",
-			})
 		return
 	}
 
@@ -5683,12 +5532,6 @@ func (h *AISettingsHandler) HandleGetInvestigation(w http.ResponseWriter, r *htt
 func (h *AISettingsHandler) HandleReapproveInvestigationFix(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Check license
-	if !h.GetAIService(r.Context()).HasLicenseFeature(license.FeatureAIAutoFix) {
-		writeErrorResponse(w, http.StatusForbidden, "license_required", "Pulse Patrol Auto-Fix feature requires Pro license", nil)
 		return
 	}
 

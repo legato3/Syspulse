@@ -34,7 +34,7 @@ var (
 	ErrNoLicense          = errors.New("no license activated")
 )
 
-// Claims represents the JWT claims in a Pulse Pro license.
+// Claims represents the JWT claims in a license.
 type Claims struct {
 	// License ID (unique identifier)
 	LicenseID string `json:"lid"`
@@ -61,7 +61,7 @@ type Claims struct {
 	MaxGuests int `json:"max_guests,omitempty"`
 }
 
-// License represents a validated Pulse Pro license.
+// License represents a validated license.
 type License struct {
 	// Raw JWT token
 	Raw string `json:"-"`
@@ -125,9 +125,10 @@ func (l *License) HasFeature(feature string) bool {
 
 // AllFeatures returns all features granted by this license.
 func (l *License) AllFeatures() []string {
-	// Start with tier features
+	// Start with the default feature set. All implemented features are available
+	// without a paid tier; license tiers are retained only for compatibility.
 	features := make(map[string]bool)
-	for _, f := range TierFeatures[l.Claims.Tier] {
+	for _, f := range TierFeatures[TierFree] {
 		features[f] = true
 	}
 	// Add explicit features
@@ -226,7 +227,7 @@ func (s *Service) IsValid() bool {
 
 // HasFeature checks if the current license grants a feature.
 func (s *Service) HasFeature(feature string) bool {
-	// In demo mode or dev mode, grant all Pro features
+	// In demo mode or dev mode, grant all features.
 	if isDemoMode() || isDevMode() {
 		return true
 	}
@@ -325,16 +326,12 @@ func (s *Service) ActivatePersisted(licenseKey string) (*License, error) {
 // This implements the LicenseChecker interface for the AI service
 func (s *Service) GetLicenseStateString() (string, bool) {
 	state, _ := s.GetLicenseState()
-	hasFeatures := state == LicenseStateActive || state == LicenseStateGracePeriod
-	return string(state), hasFeatures
+	return string(state), true
 }
 
 // RequireFeature returns an error if the feature is not available.
 // This is the primary method for feature gating.
 func (s *Service) RequireFeature(feature string) error {
-	if !s.HasFeature(feature) {
-		return fmt.Errorf("%w: %s requires Pulse Pro", ErrFeatureNotIncluded, GetFeatureDisplayName(feature))
-	}
 	return nil
 }
 

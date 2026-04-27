@@ -77,7 +77,7 @@ func (h *LicenseHandlers) getTenantComponents(ctx context.Context) (*license.Ser
 					gracePeriodEnd := time.Unix(*persisted.GracePeriodEnd, 0)
 					lic.GracePeriodEnd = &gracePeriodEnd
 				}
-				log.Info().Str("org_id", orgID).Msg("Loaded saved Pulse Pro license")
+				log.Info().Str("org_id", orgID).Msg("Loaded saved license")
 
 				// Initialize audit logger (globally) if licensed
 				// This is a trade-off: if ANY tenant is licensed, we enable audit logging globally (or for that path?)
@@ -284,8 +284,13 @@ func (h *LicenseHandlers) HandleLicenseFeatures(w http.ResponseWriter, r *http.R
 			license.FeatureRBAC:              service.HasFeature(license.FeatureRBAC),
 			license.FeatureAuditLogging:      service.HasFeature(license.FeatureAuditLogging),
 			license.FeatureAdvancedReporting: service.HasFeature(license.FeatureAdvancedReporting),
+			license.FeatureLongTermMetrics:   service.HasFeature(license.FeatureLongTermMetrics),
+			license.FeatureMultiUser:         service.HasFeature(license.FeatureMultiUser),
+			license.FeatureWhiteLabel:        service.HasFeature(license.FeatureWhiteLabel),
+			license.FeatureMultiTenant:       service.HasFeature(license.FeatureMultiTenant),
+			license.FeatureUnlimited:         service.HasFeature(license.FeatureUnlimited),
 		},
-		UpgradeURL: "https://pulserelay.pro/",
+		UpgradeURL: "",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -401,7 +406,7 @@ func (h *LicenseHandlers) HandleActivateLicense(w http.ResponseWriter, r *http.R
 		Str("email", lic.Claims.Email).
 		Str("tier", string(lic.Claims.Tier)).
 		Bool("lifetime", lic.IsLifetime()).
-		Msg("Pulse Pro license activated")
+		Msg("License activated")
 
 	// Initialize audit logger if the new license has audit_logging feature
 	h.initAuditLoggerIfLicensed(service, persistence)
@@ -440,7 +445,7 @@ func (h *LicenseHandlers) HandleClearLicense(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	log.Info().Msg("Pulse Pro license cleared")
+	log.Info().Msg("License cleared")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -449,49 +454,18 @@ func (h *LicenseHandlers) HandleClearLicense(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// RequireLicenseFeature is a middleware that checks if a license feature is available.
-// Returns HTTP 402 Payment Required if the feature is not licensed.
-// RequireLicenseFeature is a middleware that checks if a license feature is available.
-// Returns HTTP 402 Payment Required if the feature is not licensed.
-// Note: Changed to take *LicenseHandlers to access service at runtime.
+// RequireLicenseFeature is retained for route compatibility. Features are no
+// longer paywalled, so it always delegates to the wrapped handler.
 func RequireLicenseFeature(handlers *LicenseHandlers, feature string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		service := handlers.Service(r.Context())
-		if err := service.RequireFeature(feature); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusPaymentRequired)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":       "license_required",
-				"message":     err.Error(),
-				"feature":     feature,
-				"upgrade_url": "https://pulserelay.pro/",
-			})
-			return
-		}
 		next(w, r)
 	}
 }
 
-// LicenseGatedEmptyResponse returns an empty array with license metadata header for unlicensed users.
-// Use this instead of RequireLicenseFeature when the endpoint should return empty data
-// rather than a 402 error (to avoid breaking Promise.all in the frontend).
-// The X-License-Required header indicates upgrade is needed.
-// LicenseGatedEmptyResponse returns an empty array with license metadata header for unlicensed users.
-// Use this instead of RequireLicenseFeature when the endpoint should return empty data
-// rather than a 402 error (to avoid breaking Promise.all in the frontend).
-// The X-License-Required header indicates upgrade is needed.
+// LicenseGatedEmptyResponse is retained for route compatibility. Features are
+// no longer paywalled, so it always delegates to the wrapped handler.
 func LicenseGatedEmptyResponse(handlers *LicenseHandlers, feature string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		service := handlers.Service(r.Context())
-		if err := service.RequireFeature(feature); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			// Set header to indicate license is required (frontend can check this)
-			w.Header().Set("X-License-Required", "true")
-			w.Header().Set("X-License-Feature", feature)
-			// Return 200 with empty array (compatible with frontend array expectations)
-			w.Write([]byte("[]"))
-			return
-		}
 		next(w, r)
 	}
 }

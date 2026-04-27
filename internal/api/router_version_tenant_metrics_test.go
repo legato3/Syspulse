@@ -127,8 +127,8 @@ func TestHandleMetricsHistory_LicenseRequired(t *testing.T) {
 
 	router.handleMetricsHistory(rec, req)
 
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusPaymentRequired)
+	if rec.Code == http.StatusPaymentRequired {
+		t.Fatalf("long-term metrics should not require a license")
 	}
 }
 

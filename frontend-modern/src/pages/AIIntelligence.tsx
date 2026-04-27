@@ -45,14 +45,12 @@ import PlayIcon from 'lucide-solid/icons/play';
 import CircleHelpIcon from 'lucide-solid/icons/circle-help';
 import XIcon from 'lucide-solid/icons/x';
 
-import SparklesIcon from 'lucide-solid/icons/sparkles';
 import CheckCircleIcon from 'lucide-solid/icons/check-circle';
 import SettingsIcon from 'lucide-solid/icons/settings';
 import { PulsePatrolLogo } from '@/components/Brand/PulsePatrolLogo';
 import { TogglePrimitive, Toggle } from '@/components/shared/Toggle';
 import { ApprovalBanner, PatrolStatusBar, RunHistoryPanel, CountdownTimer } from '@/components/patrol';
 import { usePatrolStream } from '@/hooks/usePatrolStream';
-import { hasFeature } from '@/stores/license';
 import {
   formatRelativeTime,
   formatTriggerReason,
@@ -173,9 +171,9 @@ export function AIIntelligence() {
 
 
 
-  // License feature gates
-  const alertAnalysisLocked = createMemo(() => !hasFeature('ai_alerts'));
-  const autoFixLocked = createMemo(() => !hasFeature('ai_autofix'));
+  // Retained as reactive helpers for UI disable logic; paid feature gates are disabled.
+  const alertAnalysisLocked = createMemo(() => false);
+  const autoFixLocked = createMemo(() => false);
   const [selectedRun, setSelectedRun] = createSignal<PatrolRunRecord | null>(null);
 
   const scheduleOptions = createMemo(() => {
@@ -338,7 +336,7 @@ export function AIIntelligence() {
   }
 
 
-  // Fetch patrol status (license_required reflects auto-fix, not patrol access)
+  // Fetch patrol status.
   const [patrolStatus, { refetch: refetchPatrolStatus }] = createResource<PatrolStatus | null>(async () => {
     try {
       return await getPatrolStatus();
@@ -359,8 +357,6 @@ export function AIIntelligence() {
     }
   );
 
-  const licenseRequired = createMemo(() => patrolStatus()?.license_required ?? false);
-  const upgradeUrl = createMemo(() => patrolStatus()?.upgrade_url || 'https://pulserelay.pro/');
   const blockedReason = createMemo(() => patrolStatus()?.blocked_reason?.trim() ?? '');
   const blockedAt = createMemo(() => patrolStatus()?.blocked_at);
   const showBlockedBanner = createMemo(() => patrolEnabledLocal() && !!blockedReason());
@@ -699,8 +695,7 @@ export function AIIntelligence() {
             <div class="flex items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
               <For each={(['monitor', 'approval', 'assisted'] as PatrolAutonomyLevel[])}>
                 {(level) => {
-                  const isProLocked = () => autoFixLocked() && level === 'assisted';
-                  const isDisabled = () => !patrolEnabledLocal() || isProLocked();
+                  const isDisabled = () => !patrolEnabledLocal();
                   // Show as active for 'assisted' when actual level is 'assisted' or 'full' (full is assisted + critical toggle)
                   const isActive = () => level === 'assisted'
                     ? autonomyLevel() === 'assisted' || autonomyLevel() === 'full'
@@ -710,7 +705,6 @@ export function AIIntelligence() {
                     <button
                       onClick={() => handleAutonomyChange(level)}
                       disabled={isDisabled()}
-                      title={isProLocked() ? 'Upgrade to Pulse Pro for automatic fixes' : undefined}
                       class={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${isActive()
                         ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm'
                         : isDisabled()
@@ -744,7 +738,7 @@ export function AIIntelligence() {
               </div>
             </div>
 
-            {/* Advanced Settings Gear — visible to all users with gentle Pro upgrade hints */}
+            {/* Advanced Settings Gear */}
             <div class="relative" ref={advancedSettingsRef}>
                 <button
                   onClick={() => setShowAdvancedSettings(!showAdvancedSettings())}
@@ -787,12 +781,6 @@ export function AIIntelligence() {
                             disabled={autoFixLocked() || !(autonomyLevel() === 'assisted' || autonomyLevel() === 'full')}
                           />
                         </div>
-                        <Show when={autoFixLocked()}>
-                          <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
-                            <a class="text-indigo-600 dark:text-indigo-400 font-medium hover:underline" href="https://pulserelay.pro/" target="_blank" rel="noreferrer">Upgrade to Pro</a>
-                            {' '}to unlock auto-fix.
-                          </p>
-                        </Show>
                         <Show when={!autoFixLocked() && !(autonomyLevel() === 'assisted' || autonomyLevel() === 'full')}>
                           <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
                             Select Auto-fix mode to configure this setting.
@@ -823,12 +811,6 @@ export function AIIntelligence() {
                             disabled={isUpdatingSettings() || alertAnalysisLocked()}
                           />
                         </div>
-                        <Show when={alertAnalysisLocked()}>
-                          <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
-                            <a class="text-indigo-600 dark:text-indigo-400 font-medium hover:underline" href="https://pulserelay.pro/" target="_blank" rel="noreferrer">Upgrade to Pro</a>
-                            {' '}to enable alert-triggered analysis.
-                          </p>
-                        </Show>
                       </div>
 
 
@@ -877,17 +859,6 @@ export function AIIntelligence() {
         </div>
       </Show>
 
-      <Show when={licenseRequired() && !showBlockedBanner()}>
-        <div class="flex-shrink-0 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 px-3 py-2">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <p class="text-xs text-blue-700 dark:text-blue-300">
-              <a class="text-indigo-600 dark:text-indigo-400 font-semibold hover:underline" href={upgradeUrl()} target="_blank" rel="noopener noreferrer">Upgrade to Pro</a>
-              {' '}to unlock automatic fixes and alert-triggered analysis.
-            </p>
-          </div>
-        </div>
-      </Show>
-
       <Show when={showBlockedBanner()}>
         <div class="flex-shrink-0 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 px-4 py-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -917,17 +888,6 @@ export function AIIntelligence() {
                 <SettingsIcon class="w-3.5 h-3.5" />
                 Open AI Settings
               </a>
-              <Show when={licenseRequired()}>
-                <a
-                  href={upgradeUrl()}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="inline-flex items-center justify-center gap-2 px-3 py-1.5 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors"
-                >
-                  <SparklesIcon class="w-3.5 h-3.5" />
-                  Upgrade
-                </a>
-              </Show>
             </div>
           </div>
         </div>

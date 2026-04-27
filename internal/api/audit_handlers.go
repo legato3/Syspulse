@@ -133,7 +133,7 @@ func (h *AuditHandlers) HandleVerifyAuditEvent(w http.ResponseWriter, r *http.Re
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"available": false,
-			"message":   "Signature verification requires Pulse Pro with enterprise audit logging",
+			"message":   "Signature verification requires persistent audit logging",
 		})
 		return
 	}
@@ -340,7 +340,7 @@ func (h *AuditHandlers) HandleExportAuditEvents(w http.ResponseWriter, r *http.R
 	// Check if persistent logger is available
 	if !isPersistentLogger() {
 		writeErrorResponse(w, http.StatusNotImplemented, "export_unavailable",
-			"Export requires Pulse Pro with enterprise audit logging", nil)
+			"Export requires persistent audit logging", nil)
 		return
 	}
 
@@ -416,7 +416,7 @@ func (h *AuditHandlers) HandleAuditSummary(w http.ResponseWriter, r *http.Reques
 	// Check if persistent logger is available
 	if !isPersistentLogger() {
 		writeErrorResponse(w, http.StatusNotImplemented, "summary_unavailable",
-			"Summary requires Pulse Pro with enterprise audit logging", nil)
+			"Summary requires persistent audit logging", nil)
 		return
 	}
 

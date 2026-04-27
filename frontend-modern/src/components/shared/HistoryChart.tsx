@@ -2,12 +2,11 @@
  * HistoryChart Component
  *
  * Canvas-based chart for displaying historical metrics data (up to 90 days).
- * Includes user-friendly empty states and Pro-tier gating for 30d/90d data.
+ * Includes user-friendly empty states.
  */
 
-import { Component, createEffect, createSignal, onCleanup, Show, createMemo, onMount } from 'solid-js';
+import { Component, createEffect, createSignal, onCleanup, Show, createMemo } from 'solid-js';
 import { ChartsAPI, type ResourceType, type HistoryTimeRange, type AggregatedMetricPoint } from '@/api/charts';
-import { hasFeature, loadLicenseStatus } from '@/stores/license';
 import { Portal } from 'solid-js/web';
 import { formatBytes } from '@/utils/format';
 import { calculateOptimalPoints } from '@/utils/downsample';
@@ -37,7 +36,7 @@ interface HistoryChartProps {
     hideSelector?: boolean;
     /** Strip outer card chrome (border/padding/shadow) and reduce min-height for inline embedding. */
     compact?: boolean;
-    /** Suppress the built-in Pro lock overlay (caller handles it externally). */
+    /** Compatibility prop retained for existing callers. */
     hideLock?: boolean;
 }
 
@@ -71,11 +70,6 @@ export const HistoryChart: Component<HistoryChartProps> = (props) => {
         }
     });
 
-    // Load license status on mount to ensure hasFeature works correctly
-    onMount(() => {
-        loadLicenseStatus();
-    });
-
     // Sync internal range with props.range
     createEffect(() => {
         if (props.range) {
@@ -90,18 +84,6 @@ export const HistoryChart: Component<HistoryChartProps> = (props) => {
             props.onRangeChange(newRange);
         }
     };
-
-    // Feature gating check
-    const isLongTermEnabled = () => hasFeature('long_term_metrics');
-
-    // Check if current view is locked
-    const isLocked = createMemo(() => {
-        const r = range();
-        // Lock if range > 7d and feature not enabled (7d is free, 30d/90d require Pro)
-        return !isLongTermEnabled() && (r === '30d' || r === '90d');
-    });
-
-    const lockDays = createMemo(() => (range() === '30d' ? '30' : '90'));
 
     // Hover state for tooltip
     const [hoveredPoint, setHoveredPoint] = createSignal<{
@@ -185,17 +167,9 @@ export const HistoryChart: Component<HistoryChartProps> = (props) => {
         const type = props.resourceType;
         const id = props.resourceId;
         const metric = props.metric;
-        const locked = isLocked();
         const pointsCap = maxPoints();
 
         if (!id || !type) return;
-
-        if (locked) {
-            setLoading(false);
-            setError(null);
-            setSource(null);
-            return;
-        }
 
         // Initial or user-triggered load (not background refresh)
         loadData(r, type, id, metric, pointsCap, false);
@@ -212,10 +186,9 @@ export const HistoryChart: Component<HistoryChartProps> = (props) => {
         const type = props.resourceType;
         const id = props.resourceId;
         const metric = props.metric;
-        const locked = isLocked();
         const pointsCap = maxPoints();
 
-        if (!id || !type || locked) return;
+        if (!id || !type) return;
 
         // Background refresh - pass true to prevent loading spinner
         loadData(r, type, id, metric, pointsCap, true);
@@ -620,28 +593,6 @@ export const HistoryChart: Component<HistoryChartProps> = (props) => {
                     </div>
                 </Show>
 
-                {/* Pro Lock Overlay */}
-                <Show when={isLocked() && !props.hideLock}>
-                    <div class="absolute inset-0 z-10 flex flex-col items-center justify-center backdrop-blur-sm bg-white/60 dark:bg-gray-900/60 rounded-lg">
-                        <div class="bg-indigo-500 rounded-full p-3 shadow-lg mb-3">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-1">{lockDays()}-Day History</h3>
-                        <p class="text-sm text-gray-600 dark:text-gray-300 text-center max-w-[200px] mb-4">
-                            Upgrade to Pulse Pro to unlock {lockDays()} days of historical data retention.
-                        </p>
-                        <a
-                            href="https://pulserelay.pro/pricing"
-                            target="_blank"
-                            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-md shadow-sm transition-colors"
-                        >
-                            Unlock Pro Features
-                        </a>
-                    </div>
-                </Show>
             </div>
 
             <Portal>

@@ -247,7 +247,7 @@ func (h *RBACHandlers) HandleRBACChangelog(w http.ResponseWriter, r *http.Reques
 
 	em := auth.GetExtendedManager()
 	if em == nil {
-		writeErrorResponse(w, http.StatusNotImplemented, "rbac_unavailable", "RBAC changelog is not available (requires Pro)", nil)
+		writeErrorResponse(w, http.StatusNotImplemented, "rbac_unavailable", "RBAC changelog is not available", nil)
 		return
 	}
 
@@ -296,7 +296,7 @@ func (h *RBACHandlers) HandleRoleEffective(w http.ResponseWriter, r *http.Reques
 
 	em := auth.GetExtendedManager()
 	if em == nil {
-		writeErrorResponse(w, http.StatusNotImplemented, "rbac_unavailable", "Role inheritance is not available (requires Pro)", nil)
+		writeErrorResponse(w, http.StatusNotImplemented, "rbac_unavailable", "Role inheritance is not available", nil)
 		return
 	}
 

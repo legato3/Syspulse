@@ -4,7 +4,6 @@ import { RBACAPI } from '@/api/rbac';
 import type { Role, UserRoleAssignment, Permission } from '@/types/rbac';
 import { notificationStore } from '@/stores/notifications';
 import { logger } from '@/utils/logger';
-import { hasFeature, loadLicenseStatus, licenseLoaded } from '@/stores/license';
 import Users from 'lucide-solid/icons/users';
 import Shield from 'lucide-solid/icons/shield';
 import BadgeCheck from 'lucide-solid/icons/badge-check';
@@ -44,7 +43,6 @@ export const UserAssignmentsPanel: Component = () => {
     };
 
     onMount(() => {
-        loadLicenseStatus();
         loadData();
     });
 
@@ -128,27 +126,6 @@ export const UserAssignmentsPanel: Component = () => {
                         />
                     </div>
                 </div>
-
-                <Show when={licenseLoaded() && !hasFeature('rbac') && !loading()}>
-                    <div class="p-4 bg-teal-50 dark:bg-teal-900/20 border border-teal-100 dark:border-teal-800 rounded-xl">
-                        <div class="flex flex-col sm:flex-row items-center gap-4">
-                            <div class="flex-1">
-                                <h4 class="text-base font-semibold text-gray-900 dark:text-white">Centralized Access Control (Pro)</h4>
-                                <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                                    Assign multi-tier roles to users and manage infrastructure-wide security policies.
-                                </p>
-                            </div>
-                            <a
-                                href="https://pulserelay.pro/"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="px-5 py-2.5 text-sm font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors"
-                            >
-                                Upgrade to Pro
-                            </a>
-                        </div>
-                    </div>
-                </Show>
 
                 <Show when={loading()}>
                     <div class="flex items-center justify-center py-8">

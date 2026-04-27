@@ -1,4 +1,4 @@
-import { Component, Show, For, createSignal, onMount, createMemo } from 'solid-js';
+import { Component, Show, For, createSignal, onMount } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { Card } from '@/components/shared/Card';
 import { SectionHeader } from '@/components/shared/SectionHeader';
@@ -6,7 +6,6 @@ import { Toggle } from '@/components/shared/Toggle';
 import { formField, labelClass, controlClass, formHelpText } from '@/components/shared/Form';
 import { notificationStore } from '@/stores/notifications';
 import { logger } from '@/utils/logger';
-import { hasFeature, loadLicenseStatus, licenseLoaded } from '@/stores/license';
 import Plus from 'lucide-solid/icons/plus';
 import Pencil from 'lucide-solid/icons/pencil';
 import Trash2 from 'lucide-solid/icons/trash-2';
@@ -14,7 +13,6 @@ import Shield from 'lucide-solid/icons/shield';
 import Key from 'lucide-solid/icons/key';
 import Globe from 'lucide-solid/icons/globe';
 import Copy from 'lucide-solid/icons/copy';
-import ExternalLink from 'lucide-solid/icons/external-link';
 import CheckCircle from 'lucide-solid/icons/check-circle';
 import XCircle from 'lucide-solid/icons/x-circle';
 import Eye from 'lucide-solid/icons/eye';
@@ -192,7 +190,6 @@ export const SSOProvidersPanel: Component<Props> = (props) => {
   const [metadataPreview, setMetadataPreview] = createSignal<MetadataPreview | null>(null);
   const [loadingPreview, setLoadingPreview] = createSignal(false);
 
-  const hasAdvancedSSO = createMemo(() => hasFeature('advanced_sso'));
 
   const loadProviders = async () => {
     setLoading(true);
@@ -220,7 +217,6 @@ export const SSOProvidersPanel: Component<Props> = (props) => {
   };
 
   onMount(() => {
-    loadLicenseStatus();
     loadProviders();
   });
 
@@ -506,28 +502,6 @@ export const SSOProvidersPanel: Component<Props> = (props) => {
 
   return (
     <div class="space-y-6">
-      {/* License banner */}
-      <Show when={licenseLoaded() && !hasAdvancedSSO() && !loading()}>
-        <Card padding="md" class="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800">
-          <div class="flex flex-col sm:flex-row items-center gap-4">
-            <div class="flex-1">
-              <h4 class="text-base font-semibold text-gray-900 dark:text-white">Advanced SSO</h4>
-              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                SAML 2.0 and multi-provider SSO requires Pulse Pro. Basic OIDC is available in the free tier.
-              </p>
-            </div>
-            <a
-              href="https://pulserelay.pro/"
-              target="_blank"
-              class="px-5 py-2.5 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
-            >
-              Upgrade to Pro
-              <ExternalLink class="w-4 h-4" />
-            </a>
-          </div>
-        </Card>
-      </Show>
-
       {/* Main panel */}
       <Card
         padding="none"
@@ -557,16 +531,14 @@ export const SSOProvidersPanel: Component<Props> = (props) => {
                 <Plus class="w-4 h-4" />
                 Add OIDC
               </button>
-              <Show when={hasAdvancedSSO()}>
-                <button
-                  type="button"
-                  onClick={() => openAddModal('saml')}
-                  class="px-3 py-1.5 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-1.5"
-                >
-                  <Plus class="w-4 h-4" />
-                  Add SAML
-                </button>
-              </Show>
+              <button
+                type="button"
+                onClick={() => openAddModal('saml')}
+                class="px-3 py-1.5 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-1.5"
+              >
+                <Plus class="w-4 h-4" />
+                Add SAML
+              </button>
             </div>
           </div>
         </div>

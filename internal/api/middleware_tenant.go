@@ -65,20 +65,12 @@ func (m *TenantMiddleware) Middleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// 3. Feature flag and License Check for multi-tenant access
-		// Non-default orgs require:
-		// 1. Feature flag enabled (PULSE_MULTI_TENANT_ENABLED=true) - returns 501 if disabled
-		// 2. Enterprise license - returns 402 if unlicensed
+		// 3. Feature flag check for multi-tenant access.
+		// Non-default orgs require PULSE_MULTI_TENANT_ENABLED=true.
 		if orgID != "default" {
 			// Check feature flag first - 501 Not Implemented if disabled
 			if !IsMultiTenantEnabled() {
 				writeMultiTenantDisabledError(w)
-				return
-			}
-			// Feature is enabled, check license - 402 Payment Required if unlicensed
-			checkCtx := context.WithValue(r.Context(), OrgIDContextKey, orgID)
-			if !hasMultiTenantFeatureForContext(checkCtx) {
-				writeMultiTenantRequiredError(w)
 				return
 			}
 		}

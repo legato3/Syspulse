@@ -43,11 +43,11 @@ func TestTenantMiddleware_FullChain(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Tenant - Enabled - Unlicensed - 402",
+			name:           "Tenant - Enabled - No License - OK",
 			orgID:          "acme",
 			flagEnabled:    true,
 			hasLicense:     false,
-			expectedStatus: http.StatusPaymentRequired,
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Tenant - Disabled - 501",

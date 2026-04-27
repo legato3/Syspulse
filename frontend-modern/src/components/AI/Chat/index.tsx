@@ -637,7 +637,7 @@ export const AIChat: Component<AIChatProps> = (props) => {
                     onClick={() => updateControlLevel('autonomous')}
                   >
                     <div class="font-medium text-slate-800 dark:text-slate-200">Autonomous</div>
-                    <div class="text-[11px] text-slate-500 dark:text-slate-400">Executes without approval (Pro)</div>
+                    <div class="text-[11px] text-slate-500 dark:text-slate-400">Executes without approval</div>
                   </button>
                 </div>
               </Show>

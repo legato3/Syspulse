@@ -15,8 +15,7 @@ import (
 
 // Multi-tenant feature flag (default: disabled)
 // Set PULSE_MULTI_TENANT_ENABLED=true to enable multi-tenant functionality.
-// This is separate from licensing - the feature must be explicitly enabled
-// AND properly licensed for non-default organizations to work.
+// This is separate from compatibility license APIs; the feature must be explicitly enabled.
 var multiTenantEnabled = strings.EqualFold(os.Getenv("PULSE_MULTI_TENANT_ENABLED"), "true")
 
 // v5 should behave as single-tenant in real runtime even if dormant multi-tenant
@@ -66,17 +65,6 @@ func (c *DefaultMultiTenantChecker) CheckMultiTenant(ctx context.Context, orgID 
 			FeatureEnabled: false,
 			Licensed:       false,
 			Reason:         "Multi-tenant functionality is not enabled",
-		}
-	}
-
-	// Feature is enabled, check license using the provider
-	service := getLicenseServiceForContext(ctx)
-	if !service.HasFeature(license.FeatureMultiTenant) {
-		return websocket.MultiTenantCheckResult{
-			Allowed:        false,
-			FeatureEnabled: true,
-			Licensed:       false,
-			Reason:         "Multi-tenant access requires an Enterprise license",
 		}
 	}
 
@@ -130,15 +118,13 @@ func getLicenseServiceForContext(ctx context.Context) *license.Service {
 	return license.NewService()
 }
 
-// hasMultiTenantFeatureForContext checks if the multi-tenant feature is licensed for the context.
+// hasMultiTenantFeatureForContext is retained for legacy callers.
 func hasMultiTenantFeatureForContext(ctx context.Context) bool {
-	service := getLicenseServiceForContext(ctx)
-	return service.HasFeature(license.FeatureMultiTenant)
+	return true
 }
 
-// RequireMultiTenant returns a middleware that checks if the multi-tenant feature is licensed.
-// It allows access to the "default" organization without a license, but requires
-// an Enterprise license for non-default organizations.
+// RequireMultiTenant returns a middleware that checks whether multi-tenant mode is enabled.
+// It allows access to the "default" organization even when multi-tenant mode is disabled.
 func RequireMultiTenant(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID := GetOrgID(r.Context())
@@ -152,12 +138,6 @@ func RequireMultiTenant(next http.HandlerFunc) http.HandlerFunc {
 		// Feature flag check - multi-tenant must be explicitly enabled
 		if !multiTenantEnabled {
 			writeMultiTenantDisabledError(w)
-			return
-		}
-
-		// Non-default orgs require multi-tenant license
-		if !hasMultiTenantFeatureForContext(r.Context()) {
-			writeMultiTenantRequiredError(w)
 			return
 		}
 
@@ -182,26 +162,7 @@ func RequireMultiTenantHandler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Non-default orgs require multi-tenant license
-		if !hasMultiTenantFeatureForContext(r.Context()) {
-			writeMultiTenantRequiredError(w)
-			return
-		}
-
 		next.ServeHTTP(w, r)
-	})
-}
-
-// writeMultiTenantRequiredError writes a 402 Payment Required response
-// indicating that multi-tenant requires an Enterprise license.
-func writeMultiTenantRequiredError(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusPaymentRequired)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"error":   "license_required",
-		"message": "Multi-tenant access requires an Enterprise license",
-		"feature": license.FeatureMultiTenant,
-		"tier":    "enterprise",
 	})
 }
 
@@ -229,16 +190,13 @@ func CheckMultiTenantLicense(orgID string) bool {
 	if !multiTenantEnabled {
 		return false
 	}
-	// Without context, we can't look up the per-tenant license service properly.
-	// Fall back to a new service (won't have persisted license).
-	return license.NewService().HasFeature(license.FeatureMultiTenant)
+	return true
 }
 
-// CheckMultiTenantLicenseWithContext checks if multi-tenant is enabled and licensed
-// using the proper per-tenant license service from the context.
+// CheckMultiTenantLicenseWithContext checks if multi-tenant is enabled.
 // Returns true if:
 // - The org ID is "default" or empty (always allowed)
-// - The feature flag is enabled AND the multi-tenant feature is licensed
+// - The feature flag is enabled
 func CheckMultiTenantLicenseWithContext(ctx context.Context, orgID string) bool {
 	if orgID == "" || orgID == "default" {
 		return true
@@ -247,5 +205,5 @@ func CheckMultiTenantLicenseWithContext(ctx context.Context, orgID string) bool 
 	if !multiTenantEnabled {
 		return false
 	}
-	return hasMultiTenantFeatureForContext(ctx)
+	return true
 }

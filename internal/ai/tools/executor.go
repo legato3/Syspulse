@@ -305,7 +305,7 @@ const (
 	ControlLevelReadOnly ControlLevel = "read_only"
 	// ControlLevelControlled - AI can execute with per-command approval
 	ControlLevelControlled ControlLevel = "controlled"
-	// ControlLevelAutonomous - AI executes without approval (requires Pro license)
+	// ControlLevelAutonomous - AI executes without approval.
 	ControlLevelAutonomous ControlLevel = "autonomous"
 )
 

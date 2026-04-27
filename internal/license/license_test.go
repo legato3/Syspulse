@@ -22,15 +22,15 @@ func TestTierHasFeature(t *testing.T) {
 		expected bool
 	}{
 		{"free has AI patrol (BYOK)", TierFree, FeatureAIPatrol, true},
-		{"free has no AI autofix", TierFree, FeatureAIAutoFix, false},
+		{"free has AI autofix", TierFree, FeatureAIAutoFix, true},
 		{"pro has AI patrol", TierPro, FeatureAIPatrol, true},
 		{"pro has AI alerts", TierPro, FeatureAIAlerts, true},
 		{"pro has AI autofix", TierPro, FeatureAIAutoFix, true},
 		{"pro has K8s AI", TierPro, FeatureKubernetesAI, true},
-		{"pro does not have multi-user", TierPro, FeatureMultiUser, false},
+		{"pro has multi-user", TierPro, FeatureMultiUser, true},
 		{"lifetime has AI patrol", TierLifetime, FeatureAIPatrol, true},
 		{"msp has unlimited", TierMSP, FeatureUnlimited, true},
-		{"msp does not have multi-user yet", TierMSP, FeatureMultiUser, false},
+		{"msp has multi-user", TierMSP, FeatureMultiUser, true},
 		{"enterprise has multi-user", TierEnterprise, FeatureMultiUser, true},
 		{"enterprise has white-label", TierEnterprise, FeatureWhiteLabel, true},
 		{"pro has Basic SSO", TierPro, FeatureSSO, true},
@@ -71,9 +71,9 @@ func TestLicenseHasFeature(t *testing.T) {
 		t.Error("License should have explicitly granted feature")
 	}
 
-	// Should not have ungranted features
-	if license.HasFeature(FeatureMultiUser) {
-		t.Error("Pro license should not have multi-user")
+	// All implemented features are available across tiers.
+	if !license.HasFeature(FeatureMultiUser) {
+		t.Error("Pro license should have multi-user")
 	}
 }
 
@@ -179,12 +179,12 @@ func TestLicenseExpiration(t *testing.T) {
 func TestServiceFeatureGating(t *testing.T) {
 	service := NewService()
 
-	// No license - should have free tier features but not Pro features
+	// No license - should have all implemented features.
 	if !service.HasFeature(FeatureAIPatrol) {
-		t.Error("Should have Patrol in free tier even without license")
+		t.Error("Should have Patrol without license")
 	}
-	if service.HasFeature(FeatureAIAutoFix) {
-		t.Error("Should not have auto-fix without license")
+	if !service.HasFeature(FeatureAIAutoFix) {
+		t.Error("Should have auto-fix without license")
 	}
 	if service.IsValid() {
 		t.Error("Should not be valid without license")
@@ -213,7 +213,7 @@ func TestServiceFeatureGating(t *testing.T) {
 		t.Error("Tier mismatch")
 	}
 
-	// Should now have Pro features
+	// Should now have all features.
 	if !service.HasFeature(FeatureAIPatrol) {
 		t.Error("Should have Pulse Patrol with Pro license")
 	}
@@ -226,9 +226,9 @@ func TestServiceFeatureGating(t *testing.T) {
 		t.Errorf("RequireFeature should succeed: %v", err)
 	}
 
-	// Require feature should fail for ungranted feature
-	if err := service.RequireFeature(FeatureMultiUser); err == nil {
-		t.Error("RequireFeature should fail for multi-user")
+	// RequireFeature is retained for route compatibility and no longer gates features.
+	if err := service.RequireFeature(FeatureMultiUser); err != nil {
+		t.Errorf("RequireFeature should succeed for multi-user: %v", err)
 	}
 
 	// Clear license
@@ -624,8 +624,8 @@ func TestServiceGetLicenseStateString(t *testing.T) {
 		if stateStr != "none" {
 			t.Errorf("Expected state string 'none', got %q", stateStr)
 		}
-		if hasFeatures {
-			t.Error("Expected hasFeatures to be false for no license")
+		if !hasFeatures {
+			t.Error("Expected hasFeatures to be true without a license")
 		}
 	})
 

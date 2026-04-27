@@ -6,7 +6,6 @@ import { Toggle } from '@/components/shared/Toggle';
 import { formField, labelClass, controlClass, formHelpText } from '@/components/shared/Form';
 import { notificationStore } from '@/stores/notifications';
 import { logger } from '@/utils/logger';
-import { hasFeature, loadLicenseStatus, licenseLoaded } from '@/stores/license';
 
 interface OIDCConfigResponse {
   enabled: boolean;
@@ -147,7 +146,6 @@ export const OIDCPanel: Component<Props> = (props) => {
   };
 
   onMount(() => {
-    loadLicenseStatus();
     loadConfig();
   });
 
@@ -279,25 +277,6 @@ export const OIDCPanel: Component<Props> = (props) => {
           />
         </div>
       </div>
-      <Show when={licenseLoaded() && !hasFeature('sso') && !loading()}>
-        <div class="mx-6 mt-6 p-5 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 rounded-xl">
-          <div class="flex flex-col sm:flex-row items-center gap-4">
-            <div class="flex-1">
-              <h4 class="text-base font-semibold text-gray-900 dark:text-white">Single Sign-On</h4>
-              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                Connect Pulse to your identity provider for seamless team authentication.
-              </p>
-            </div>
-            <a
-              href="https://pulserelay.pro/"
-              target="_blank"
-              class="px-5 py-2.5 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-            >
-              Upgrade to Pro
-            </a>
-          </div>
-        </div>
-      </Show>
       <form class="p-6 space-y-5" onSubmit={handleSave}>
         <div class="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3 text-xs text-blue-800 dark:text-blue-200">
           <ol class="space-y-1 list-decimal pl-4">

@@ -1,34 +1,28 @@
-// Package license handles Pulse Pro license validation and feature gating.
+// Package license defines feature flags used throughout Pulse.
 package license
 
-// Feature constants represent gated features in Pulse Pro.
-// These are embedded in license JWTs and checked at runtime.
+// Feature constants represent optional capabilities exposed by Pulse.
 const (
-	// Pro tier features - AI
 	FeatureAIPatrol     = "ai_patrol"     // Background AI health monitoring
 	FeatureAIAlerts     = "ai_alerts"     // AI analysis when alerts fire
 	FeatureAIAutoFix    = "ai_autofix"    // Automatic remediation
-	FeatureKubernetesAI = "kubernetes_ai" // AI analysis of K8s (NOT basic monitoring)
+	FeatureKubernetesAI = "kubernetes_ai" // AI analysis of K8s
 
-	// Pro tier features - Fleet Management
 	FeatureAgentProfiles = "agent_profiles" // Centralized agent configuration profiles
 
-	// Free tier features - Monitoring
-	FeatureUpdateAlerts = "update_alerts" // Alerts for pending container/package updates (free feature)
+	FeatureUpdateAlerts = "update_alerts" // Alerts for pending container/package updates
 
-	// Pro tier features - Team & Compliance
 	FeatureRBAC              = "rbac"               // Role-Based Access Control
 	FeatureAuditLogging      = "audit_logging"      // Persistent audit logs with signing
-	FeatureSSO               = "sso"                // OIDC/SSO authentication (Basic)
-	FeatureAdvancedSSO       = "advanced_sso"       // SAML, Multi-provider, Role Mapping
+	FeatureSSO               = "sso"                // OIDC/SSO authentication
+	FeatureAdvancedSSO       = "advanced_sso"       // SAML, multi-provider, role mapping
 	FeatureAdvancedReporting = "advanced_reporting" // PDF/CSV reporting engine
-	FeatureLongTermMetrics   = "long_term_metrics"  // 90-day historical metrics (SQLite)
+	FeatureLongTermMetrics   = "long_term_metrics"  // Extended historical metrics
 
-	// MSP/Enterprise tier features (for volume deals)
-	FeatureMultiUser   = "multi_user"   // Multi-user (likely merged with RBAC)
-	FeatureWhiteLabel  = "white_label"  // Custom branding - NOT IMPLEMENTED YET
-	FeatureMultiTenant = "multi_tenant" // Multi-tenant - NOT IMPLEMENTED YET
-	FeatureUnlimited   = "unlimited"    // Unlimited instances (for MSP/volume deals)
+	FeatureMultiUser   = "multi_user"
+	FeatureWhiteLabel  = "white_label"
+	FeatureMultiTenant = "multi_tenant"
+	FeatureUnlimited   = "unlimited"
 )
 
 // Tier represents a license tier.
@@ -43,91 +37,35 @@ const (
 	TierEnterprise Tier = "enterprise"
 )
 
-// TierFeatures maps each tier to its included features.
+var allFeatures = []string{
+	FeatureAIPatrol,
+	FeatureAIAlerts,
+	FeatureAIAutoFix,
+	FeatureKubernetesAI,
+	FeatureAgentProfiles,
+	FeatureUpdateAlerts,
+	FeatureSSO,
+	FeatureAdvancedSSO,
+	FeatureRBAC,
+	FeatureAuditLogging,
+	FeatureAdvancedReporting,
+	FeatureLongTermMetrics,
+	FeatureMultiUser,
+	FeatureWhiteLabel,
+	FeatureMultiTenant,
+	FeatureUnlimited,
+}
+
+// TierFeatures maps each tier to its included features. Paid tiers are kept for
+// compatibility with existing persisted licenses, but all features are available
+// in the default/free tier as well.
 var TierFeatures = map[Tier][]string{
-	TierFree: {
-		// Free tier includes update alerts (container image updates) - basic monitoring feature
-		FeatureUpdateAlerts,
-		FeatureSSO,
-		FeatureAIPatrol, // Patrol is free with BYOK - auto-fix requires Pro
-	},
-	TierPro: {
-		FeatureAIPatrol,
-		FeatureAIAlerts,
-		FeatureAIAutoFix,
-		FeatureKubernetesAI,
-		FeatureAgentProfiles,
-		FeatureUpdateAlerts,
-		FeatureSSO,
-		FeatureAdvancedSSO,
-		FeatureRBAC,
-		FeatureAuditLogging,
-		FeatureAdvancedReporting,
-		FeatureLongTermMetrics,
-	},
-	TierProAnnual: {
-		FeatureAIPatrol,
-		FeatureAIAlerts,
-		FeatureAIAutoFix,
-		FeatureKubernetesAI,
-		FeatureAgentProfiles,
-		FeatureUpdateAlerts,
-		FeatureSSO,
-		FeatureAdvancedSSO,
-		FeatureRBAC,
-		FeatureAuditLogging,
-		FeatureAdvancedReporting,
-		FeatureLongTermMetrics,
-	},
-	TierLifetime: {
-		FeatureAIPatrol,
-		FeatureAIAlerts,
-		FeatureAIAutoFix,
-		FeatureKubernetesAI,
-		FeatureAgentProfiles,
-		FeatureUpdateAlerts,
-		FeatureSSO,
-		FeatureAdvancedSSO,
-		FeatureRBAC,
-		FeatureAuditLogging,
-		FeatureAdvancedReporting,
-		FeatureLongTermMetrics,
-	},
-	TierMSP: {
-		FeatureAIPatrol,
-		FeatureAIAlerts,
-		FeatureAIAutoFix,
-		FeatureKubernetesAI,
-		FeatureAgentProfiles,
-		FeatureUpdateAlerts,
-		FeatureUnlimited,
-		FeatureSSO,
-		FeatureAdvancedSSO,
-		FeatureRBAC,
-		FeatureAuditLogging,
-		FeatureAdvancedReporting,
-		FeatureLongTermMetrics,
-		// Note: FeatureMultiUser, FeatureWhiteLabel, FeatureMultiTenant
-		// are on the roadmap but NOT included until implemented
-	},
-	TierEnterprise: {
-		FeatureAIPatrol,
-		FeatureAIAlerts,
-		FeatureAIAutoFix,
-		FeatureKubernetesAI,
-		FeatureAgentProfiles,
-		FeatureUpdateAlerts,
-		FeatureUnlimited,
-		FeatureMultiUser,
-		FeatureWhiteLabel,
-		FeatureMultiTenant,
-		FeatureAuditLogging,
-		FeatureSSO,
-		FeatureAdvancedSSO,
-		FeatureRBAC,
-		FeatureAdvancedReporting,
-		FeatureLongTermMetrics,
-	},
+	TierFree:       allFeatures,
+	TierPro:        allFeatures,
+	TierProAnnual:  allFeatures,
+	TierLifetime:   allFeatures,
+	TierMSP:        allFeatures,
+	TierEnterprise: allFeatures,
 }
 
 // TierHasFeature checks if a tier includes a specific feature.

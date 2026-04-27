@@ -10,7 +10,6 @@ import { aiChatStore } from '@/stores/aiChat';
 import { logger } from '@/utils/logger';
 import { AIAPI } from '@/api/ai';
 import { AIChatAPI, type ChatSession, type FileChange } from '@/api/aiChat';
-import { hasFeature, loadLicenseStatus } from '@/stores/license';
 import type { AISettings as AISettingsType, AIProvider, AuthMethod, ModelInfo } from '@/types/ai';
 import { normalizeChatSessions } from '@/components/Settings/aiSettingsChatSessions';
 import { PROVIDER_DISPLAY_NAMES, getProviderFromModelId, groupModelsByProvider } from '@/utils/aiModels';
@@ -76,9 +75,6 @@ export const AISettings: Component = () => {
   // Per-provider test state
   const [testingProvider, setTestingProvider] = createSignal<string | null>(null);
   const [providerTestResult, setProviderTestResult] = createSignal<{ provider: string; success: boolean; message: string } | null>(null);
-  const hasAutoFixFeature = createMemo(() => hasFeature('ai_autofix'));
-  const autoFixLocked = createMemo(() => !hasAutoFixFeature());
-
   // Auto-fix acknowledgement state (not persisted - must acknowledge each session)
   // Note: autoFixAcknowledged removed — auto-fix UI moved to Patrol page
 
@@ -390,7 +386,6 @@ export const AISettings: Component = () => {
   };
 
   onMount(() => {
-    loadLicenseStatus();
     loadSettings();
   });
 
@@ -1584,7 +1579,7 @@ export const AISettings: Component = () => {
                   >
                     <option value="read_only">Read Only - Pulse Assistant can only observe</option>
                     <option value="controlled">Controlled - Pulse Assistant executes with your approval</option>
-                    <option value="autonomous">Autonomous - Pulse Assistant executes without approval (Pro)</option>
+                    <option value="autonomous">Autonomous - Pulse Assistant executes without approval</option>
                   </select>
                 </div>
                 <p class="text-[10px] text-gray-500 dark:text-gray-400 ml-[7.5rem]">
@@ -1597,20 +1592,6 @@ export const AISettings: Component = () => {
                     <strong>Legal Disclaimer:</strong> Model-driven systems can hallucinate. You are responsible for any damage caused by autonomous actions. See <a href="https://github.com/rcourtman/Pulse/blob/main/TERMS.md" target="_blank" class="underline">Terms of Service</a>.
                   </div>
                 </Show>
-                <Show when={form.controlLevel === 'autonomous' && autoFixLocked()}>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">
-                    <a
-                      class="text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
-                      href="https://pulserelay.pro/"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Upgrade to Pro
-                    </a>{' '}
-                    to enable autonomous mode.
-                  </p>
-                </Show>
-
                 {/* Protected Guests - Only show if control is enabled */}
                 <Show when={form.controlLevel !== 'read_only'}>
                   <div class="flex items-start gap-3 pt-2 border-t border-purple-200 dark:border-purple-700">

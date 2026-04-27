@@ -2,7 +2,6 @@ import { Show, createSignal } from 'solid-js';
 import { aiChatStore } from '@/stores/aiChat';
 import type { Alert } from '@/types/api';
 import { formatAlertValue } from '@/utils/alertFormatters';
-import { notificationStore } from '@/stores/notifications';
 
 interface InvestigateAlertButtonProps {
     alert: Alert;
@@ -21,7 +20,7 @@ interface InvestigateAlertButtonProps {
  */
 export function InvestigateAlertButton(props: InvestigateAlertButtonProps) {
     const [isHovered, setIsHovered] = createSignal(false);
-    const isLocked = () => props.licenseLocked === true;
+    const isLocked = () => false;
 
     // Don't render if AI is not enabled
     if (aiChatStore.enabled !== true) {
@@ -31,11 +30,6 @@ export function InvestigateAlertButton(props: InvestigateAlertButtonProps) {
     const handleClick = (e: MouseEvent) => {
         e.stopPropagation();
         e.preventDefault();
-        if (isLocked()) {
-            notificationStore.warning('Pulse Pro required to investigate alerts with Pulse Assistant.');
-            return;
-        }
-
         // Calculate how long the alert has been active
         const startTime = new Date(props.alert.startTime);
         const now = new Date();
@@ -117,7 +111,7 @@ Please:
           hover:border-purple-300 dark:hover:border-purple-600
           ${isLocked() ? 'opacity-60 cursor-not-allowed hover:bg-purple-500/10' : ''}
           ${props.class || ''}`}
-                title={isLocked() ? 'Pulse Pro required to investigate alerts with Pulse Assistant' : 'Ask Pulse Assistant to investigate this alert'}
+                title="Ask Pulse Assistant to investigate this alert"
                 aria-disabled={isLocked()}
             >
                 <svg
@@ -155,7 +149,7 @@ Please:
           gap-1.5
           ${isLocked() ? 'opacity-60 cursor-not-allowed hover:bg-purple-500/10' : ''}
           ${props.class || ''}`}
-                title={isLocked() ? 'Pulse Pro required to investigate alerts with Pulse Assistant' : 'Ask Pulse Assistant to investigate this alert'}
+                title="Ask Pulse Assistant to investigate this alert"
                 aria-disabled={isLocked()}
             >
                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -186,7 +180,7 @@ Please:
         gap-2
         ${isLocked() ? 'opacity-60 cursor-not-allowed hover:bg-purple-500' : ''}
         ${props.class || ''}`}
-            title={isLocked() ? 'Pulse Pro required to investigate alerts with Pulse Assistant' : 'Ask Pulse Assistant to investigate this alert'}
+            title="Ask Pulse Assistant to investigate this alert"
             aria-disabled={isLocked()}
         >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

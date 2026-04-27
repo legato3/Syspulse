@@ -17,7 +17,6 @@ import {
     STORAGE_KEYS,
 } from '@/utils/localStorage';
 import { showSuccess, showWarning, showToast } from '@/utils/toast';
-import { hasFeature, loadLicenseStatus, licenseLoaded } from '@/stores/license';
 
 interface AuditEvent {
     id: string;
@@ -277,7 +276,6 @@ export default function AuditLogPanel() {
 
     onMount(() => {
         setIsMounted(true);
-        loadLicenseStatus();
         fetchAuditEvents();
     });
 
@@ -500,27 +498,6 @@ export default function AuditLogPanel() {
                     </Show>
                 </div>
             </div>
-
-            {/* Upgrade CTA */}
-            <Show when={licenseLoaded() && !hasFeature('audit_logging') && !loading()}>
-                <div class="p-6 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 rounded-xl">
-                    <div class="flex flex-col sm:flex-row items-center gap-4">
-                        <div class="flex-1">
-                            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Audit Logging</h3>
-                            <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                                Persistent, searchable audit logs with cryptographic signature verification.
-                            </p>
-                        </div>
-                        <a
-                            href="https://pulserelay.pro/"
-                            target="_blank"
-                            class="px-5 py-2.5 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-                        >
-                            Upgrade to Pro
-                        </a>
-                    </div>
-                </div>
-            </Show>
 
             {/* Filters */}
             <Show when={isPersistent()}>

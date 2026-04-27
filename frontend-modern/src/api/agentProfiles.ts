@@ -86,7 +86,7 @@ type ConfigValidationResultResponse = {
 };
 
 /**
- * API client for agent profiles (Pro feature).
+ * API client for agent profiles.
  * Endpoints are gated behind license - returns 402 if not licensed.
  */
 export class AgentProfilesAPI {

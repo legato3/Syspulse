@@ -50,13 +50,11 @@ func TestWebSocketIsolation_Permanent(t *testing.T) {
 	assert.False(t, result.FeatureEnabled, "Feature should be disabled")
 	assert.Contains(t, result.Reason, "not enabled")
 
-	// Case 3: Flag=True, License=False
+	// Case 3: Flag=True
 	SetMultiTenantEnabled(true)
 
-	// Default license provider returns no license, which is what we want to test (Block unlicensed)
 	result = checker.CheckMultiTenant(context.Background(), "tenant-1")
-	assert.False(t, result.Allowed)
+	assert.True(t, result.Allowed)
 	assert.True(t, result.FeatureEnabled)
-	assert.False(t, result.Licensed, "Should be unlicensed by default")
-	assert.Contains(t, result.Reason, "Enterprise license")
+	assert.True(t, result.Licensed)
 }

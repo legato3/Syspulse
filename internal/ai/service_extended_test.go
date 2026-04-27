@@ -792,12 +792,12 @@ func TestService_PatrolManagement(t *testing.T) {
 		t.Error("Alert analyzer should be disabled")
 	}
 
-	// 3. License constraint
+	// 3. License checker does not gate alert-triggered analysis
 	mockLicense.features[FeatureAIAlerts] = false
 	svc.cfg.AlertTriggeredAnalysis = true
 	svc.ReconfigurePatrol()
-	if alertAnalyzer.IsEnabled() {
-		t.Error("Alert analyzer should be disabled due to lack of license")
+	if !alertAnalyzer.IsEnabled() {
+		t.Error("Alert analyzer should remain enabled without a paid license")
 	}
 }
 

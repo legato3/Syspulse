@@ -52,7 +52,7 @@ const (
 	LicenseStateGracePeriod LicenseState = "grace_period"
 )
 
-// LicenseChecker provides license feature checking for Pro features
+// LicenseChecker provides feature checking for compatibility.
 type LicenseChecker interface {
 	HasFeature(feature string) bool
 	// GetLicenseStateString returns the current license state (none, active, expired, grace_period)
@@ -175,7 +175,7 @@ type Service struct {
 
 	modelsCache modelsCache
 
-	// License checker for Pro feature gating
+	// License checker retained for compatibility.
 	licenseChecker LicenseChecker
 }
 
@@ -658,24 +658,17 @@ func (s *Service) SetCorrelationDetector(detector *CorrelationDetector) {
 	}
 }
 
-// SetLicenseChecker sets the license checker for Pro feature gating
+// SetLicenseChecker sets the license checker retained for compatibility.
 func (s *Service) SetLicenseChecker(checker LicenseChecker) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.licenseChecker = checker
 }
 
-// HasLicenseFeature checks if a Pro feature is licensed (returns true if no license checker is set)
+// HasLicenseFeature reports feature availability. Features are no longer
+// paywalled, so this always returns true.
 func (s *Service) HasLicenseFeature(feature string) bool {
-	s.mu.RLock()
-	checker := s.licenseChecker
-	s.mu.RUnlock()
-
-	if checker == nil {
-		// No license checker means no enforcement (development mode or feature not gated)
-		return true
-	}
-	return checker.HasFeature(feature)
+	return true
 }
 
 // GetLicenseState returns the current license state and whether features are available
@@ -705,7 +698,6 @@ func (s *Service) StartPatrol(ctx context.Context) {
 	patrol := s.patrolService
 	alertAnalyzer := s.alertTriggeredAnalyzer
 	cfg := s.cfg
-	licenseChecker := s.licenseChecker
 	s.mu.RUnlock()
 
 	if patrol == nil {
@@ -716,11 +708,6 @@ func (s *Service) StartPatrol(ctx context.Context) {
 	if cfg == nil || !cfg.IsPatrolEnabled() {
 		log.Debug().Msg("AI Patrol not enabled")
 		return
-	}
-
-	// Check license for auto-fix feature (Pro only) - patrol itself is free with BYOK
-	if licenseChecker != nil && !licenseChecker.HasFeature(FeatureAIAutoFix) {
-		log.Info().Msg("AI Patrol Auto-Fix requires Pulse Pro license - fixes will require manual approval")
 	}
 
 	// Configure patrol from AI config (preserve defaults for resource types not in AI config)
@@ -737,12 +724,7 @@ func (s *Service) StartPatrol(ctx context.Context) {
 
 	// Configure alert-triggered analyzer (also Pro-only)
 	if alertAnalyzer != nil {
-		// Only enable if licensed for AI Alerts
 		enabled := cfg.IsAlertTriggeredAnalysisEnabled()
-		if enabled && licenseChecker != nil && !licenseChecker.HasFeature(FeatureAIAlerts) {
-			log.Info().Msg("AI Alert Analysis requires Pulse Pro license - alert-triggered analysis disabled")
-			enabled = false
-		}
 		alertAnalyzer.SetEnabled(enabled)
 		alertAnalyzer.Start() // Start cleanup goroutine
 		log.Info().
@@ -794,7 +776,6 @@ func (s *Service) ReconfigurePatrol() {
 	patrol := s.patrolService
 	alertAnalyzer := s.alertTriggeredAnalyzer
 	cfg := s.cfg
-	licenseChecker := s.licenseChecker
 	s.mu.RUnlock()
 
 	if patrol == nil || cfg == nil {
@@ -823,11 +804,6 @@ func (s *Service) ReconfigurePatrol() {
 	// Update alert-triggered analyzer (re-check license on each config change)
 	if alertAnalyzer != nil {
 		enabled := cfg.IsAlertTriggeredAnalysisEnabled()
-		// Re-check license - don't allow re-enabling without valid license
-		if enabled && licenseChecker != nil && !licenseChecker.HasFeature(FeatureAIAlerts) {
-			log.Debug().Msg("Alert-triggered analysis requires Pulse Pro license - staying disabled")
-			enabled = false
-		}
 		alertAnalyzer.SetEnabled(enabled)
 	}
 }
@@ -1395,16 +1371,11 @@ func (s *Service) GetDebugContext(req ExecuteRequest) map[string]interface{} {
 	return result
 }
 
-// IsAutonomous returns true if autonomous mode is enabled AND licensed.
-// Autonomous mode requires the ai_autofix license feature (Pro tier).
+// IsAutonomous returns true if autonomous mode is enabled.
 func (s *Service) IsAutonomous() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.cfg == nil || !s.cfg.IsAutonomous() {
-		return false
-	}
-	// Autonomous mode requires Pro license with ai_autofix feature
-	if s.licenseChecker != nil && !s.licenseChecker.HasFeature(FeatureAIAutoFix) {
 		return false
 	}
 	return true
@@ -3616,8 +3587,7 @@ Stable v5 line: https://github.com/rcourtman/Pulse/releases?q=v5.1`
 			}
 		}
 
-		// Add enriched historical context (baselines, trends, predictions)
-		// This is the Pulse Pro value-add that Claude Code can't replicate
+		// Add enriched historical context (baselines, trends, predictions).
 		prompt += s.buildEnrichedResourceContext(req.TargetID, req.TargetType, req.Context)
 	}
 
@@ -4055,8 +4025,7 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// buildEnrichedResourceContext adds historical intelligence to regular AI chat
-// This is what makes Pulse Pro valuable - context that Claude Code can't have:
+// buildEnrichedResourceContext adds historical intelligence to regular AI chat:
 // - Baseline comparisons ("this is 2x normal")
 // - Trend analysis ("memory growing 5%/day")
 // - Predictions ("disk full in 12 days")
@@ -4091,8 +4060,7 @@ func (s *Service) buildEnrichedResourceContext(resourceID, _ string, currentMetr
 			return 0, false
 		}
 
-		// Helper to format baseline comparison with status
-		// ALWAYS shows baseline info when available - this is Pulse Pro's value-add
+		// Helper to format baseline comparison with status.
 		formatBaselineComparison := func(metric string, currentVal float64, bl *baseline.MetricBaseline) string {
 			if bl.SampleCount < 10 {
 				return fmt.Sprintf("- %s: %.1f%% (baseline learning: %d/10 samples)", metric, currentVal, bl.SampleCount)
@@ -4328,14 +4296,14 @@ func (s *Service) buildEnrichedResourceContext(resourceID, _ string, currentMetr
 				}
 
 				if learning > 0 && ready == 0 {
-					return "\n\n## Historical Intelligence (Pulse Pro)\n*Learning baselines for this resource... Trends and anomaly detection will be available after more data is collected.*"
+					return "\n\n## Historical Intelligence\n*Learning baselines for this resource... Trends and anomaly detection will be available after more data is collected.*"
 				}
 			}
 		}
 		return ""
 	}
 
-	return "\n\n## Historical Intelligence (Pulse Pro)\n" + strings.Join(sections, "\n\n")
+	return "\n\n## Historical Intelligence\n" + strings.Join(sections, "\n\n")
 }
 
 // absFloat returns the absolute value of a float64

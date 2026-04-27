@@ -3,7 +3,6 @@ import { Host } from '@/types/api';
 import { formatBytes, formatUptime } from '@/utils/format';
 import { HistoryChart } from '../shared/HistoryChart';
 import { ResourceType, HistoryTimeRange } from '@/api/charts';
-import { hasFeature } from '@/stores/license';
 import { DiscoveryTab } from '../Discovery/DiscoveryTab';
 import { StackedDiskBar } from '@/components/Dashboard/StackedDiskBar';
 import { useDrawerHistoryRange } from '@/hooks/useDrawerHistoryRange';
@@ -31,9 +30,6 @@ export const HostDrawer: Component<HostDrawerProps> = (props) => {
     }
     setActiveTab(tab);
   };
-
-  const isHistoryLocked = () =>
-    !hasFeature('long_term_metrics') && (historyRange() === '30d' || historyRange() === '90d');
 
   const diskStats = () => {
     if (!props.host.disks || props.host.disks.length === 0)
@@ -489,41 +485,6 @@ export const HostDrawer: Component<HostDrawerProps> = (props) => {
                 </div>
               </div>
             </div>
-            {/* Lock Overlay */}
-            <Show when={isHistoryLocked()}>
-              <div class="absolute inset-0 z-10 flex flex-col items-center justify-center backdrop-blur-sm bg-white/60 dark:bg-gray-900/60 rounded-lg">
-                <div class="bg-indigo-500 rounded-full p-3 shadow-lg mb-3">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="24"
-                    height="24"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="white"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                  </svg>
-                </div>
-                <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-1">
-                  {historyRange() === '30d' ? '30' : '90'}-Day History
-                </h3>
-                <p class="text-sm text-gray-600 dark:text-gray-300 text-center max-w-[260px] mb-4">
-                  Upgrade to Pulse Pro to unlock {historyRange() === '30d' ? '30' : '90'} days of
-                  historical data retention.
-                </p>
-                <a
-                  href="https://pulserelay.pro/pricing"
-                  target="_blank"
-                  class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-md shadow-sm transition-colors"
-                >
-                  Unlock Pro Features
-                </a>
-              </div>
-            </Show>
           </div>
         </div>
       </div>

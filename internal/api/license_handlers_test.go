@@ -97,33 +97,26 @@ func TestHandleLicenseFeatures_NoLicense(t *testing.T) {
 	if resp.LicenseStatus != string(license.LicenseStateNone) {
 		t.Fatalf("expected license_status %q, got %q", license.LicenseStateNone, resp.LicenseStatus)
 	}
-	if resp.UpgradeURL == "" {
-		t.Fatalf("expected upgrade_url to be set")
+	if resp.UpgradeURL != "" {
+		t.Fatalf("expected upgrade_url to be empty, got %q", resp.UpgradeURL)
 	}
 
-	// Patrol is in free tier, so it should be true even without a license
-	freeTierFeatures := []string{
+	expectedFeatures := []string{
 		license.FeatureAIPatrol,
-	}
-	for _, feature := range freeTierFeatures {
-		if value, ok := resp.Features[feature]; !ok {
-			t.Fatalf("expected feature %q in response", feature)
-		} else if !value {
-			t.Fatalf("expected feature %q to be true in free tier", feature)
-		}
-	}
-
-	// These Pro features should be false without a license
-	proOnlyFeatures := []string{
 		license.FeatureAIAlerts,
 		license.FeatureAIAutoFix,
 		license.FeatureKubernetesAI,
+		license.FeatureAgentProfiles,
+		license.FeatureRBAC,
+		license.FeatureAuditLogging,
+		license.FeatureAdvancedReporting,
+		license.FeatureLongTermMetrics,
 	}
-	for _, feature := range proOnlyFeatures {
+	for _, feature := range expectedFeatures {
 		if value, ok := resp.Features[feature]; !ok {
 			t.Fatalf("expected feature %q in response", feature)
-		} else if value {
-			t.Fatalf("expected feature %q to be false without a license", feature)
+		} else if !value {
+			t.Fatalf("expected feature %q to be true without a license", feature)
 		}
 	}
 }
@@ -201,8 +194,8 @@ func TestHandleLicenseFeatures_CorruptPersistedLicense(t *testing.T) {
 	if resp.Features[license.FeatureAIPatrol] != true {
 		t.Fatalf("expected free-tier feature %q to remain enabled", license.FeatureAIPatrol)
 	}
-	if resp.Features[license.FeatureAIAutoFix] {
-		t.Fatalf("expected Pro-only feature %q to be disabled", license.FeatureAIAutoFix)
+	if resp.Features[license.FeatureAIAutoFix] != true {
+		t.Fatalf("expected feature %q to remain enabled", license.FeatureAIAutoFix)
 	}
 }
 
@@ -697,7 +690,6 @@ func TestRequireLicenseFeature_NoLicense(t *testing.T) {
 	handler := createTestHandler(t)
 
 	handlerCalled := false
-	// Use a Pro-only feature (ai_autofix) to test that middleware blocks without license
 	wrappedHandler := RequireLicenseFeature(handler, license.FeatureAIAutoFix, func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 		w.WriteHeader(http.StatusOK)
@@ -708,11 +700,11 @@ func TestRequireLicenseFeature_NoLicense(t *testing.T) {
 
 	wrappedHandler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("expected status %d, got %d", http.StatusPaymentRequired, rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
-	if handlerCalled {
-		t.Fatalf("expected handler not to be called when license is missing")
+	if !handlerCalled {
+		t.Fatalf("expected handler to be called without license")
 	}
 }
 
@@ -756,7 +748,6 @@ func TestLicenseGatedEmptyResponse_NoLicense(t *testing.T) {
 	handler := createTestHandler(t)
 
 	handlerCalled := false
-	// Use a Pro-only feature (ai_autofix) to test gating without license
 	wrappedHandler := LicenseGatedEmptyResponse(handler, license.FeatureAIAutoFix, func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 		w.WriteHeader(http.StatusOK)
@@ -771,12 +762,11 @@ func TestLicenseGatedEmptyResponse_NoLicense(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
-	if handlerCalled {
-		t.Fatalf("expected handler not to be called when license is missing")
+	if !handlerCalled {
+		t.Fatalf("expected handler to be called without license")
 	}
-	// LicenseGatedEmptyResponse returns empty array, not empty object
-	if rec.Body.String() != "[]" {
-		t.Fatalf("expected empty array [], got %s", rec.Body.String())
+	if rec.Body.String() != `{"data":"real"}` {
+		t.Fatalf("expected real response, got %s", rec.Body.String())
 	}
 }
 

@@ -34,7 +34,6 @@ import { NetworkSettingsPanel } from './NetworkSettingsPanel';
 import { UpdatesSettingsPanel } from './UpdatesSettingsPanel';
 import { UpdateConfirmationModal } from '@/components/UpdateConfirmationModal';
 import { BackupsSettingsPanel } from './BackupsSettingsPanel';
-import { ProLicensePanel } from './ProLicensePanel';
 import { SecurityAuthPanel } from './SecurityAuthPanel';
 import { APIAccessPanel } from './APIAccessPanel';
 import { SecurityOverviewPanel } from './SecurityOverviewPanel';
@@ -76,7 +75,6 @@ import Sparkles from 'lucide-solid/icons/sparkles';
 import FileText from 'lucide-solid/icons/file-text';
 import Globe from 'lucide-solid/icons/globe';
 import { ProxmoxIcon } from '@/components/icons/ProxmoxIcon';
-import { PulseLogoIcon } from '@/components/icons/PulseLogoIcon';
 import BadgeCheck from 'lucide-solid/icons/badge-check';
 import Terminal from 'lucide-solid/icons/terminal';
 import Container from 'lucide-solid/icons/container';
@@ -86,7 +84,7 @@ import type { SecurityStatus as SecurityStatusInfo } from '@/types/config';
 import { eventBus } from '@/stores/events';
 
 import { updateStore } from '@/stores/updates';
-import { isPro, loadLicenseStatus } from '@/stores/license';
+import { loadLicenseStatus } from '@/stores/license';
 
 // Type definitions
 interface DiscoveredServer {
@@ -256,7 +254,6 @@ type SettingsTab =
   | 'system-backups'
   | 'system-ai'
   | 'system-logs'
-  | 'system-pro'
   | 'api'
   | 'security-overview'
   | 'security-auth'
@@ -311,10 +308,6 @@ const SETTINGS_HEADER_META: Record<SettingsTab, { title: string; description: st
   'system-ai': {
     title: 'AI',
     description: 'Configure AI providers, models, Pulse Assistant, and Patrol.',
-  },
-  'system-pro': {
-    title: 'Pulse Pro',
-    description: 'Manage license activation and Pulse Pro feature access.',
   },
   api: {
     title: 'API access',
@@ -426,7 +419,6 @@ const Settings: Component<SettingsProps> = (props) => {
     if (path.includes('/settings/system-updates')) return 'system-updates';
     if (path.includes('/settings/system-backups')) return 'system-backups';
     if (path.includes('/settings/system-ai')) return 'system-ai';
-    if (path.includes('/settings/system-pro')) return 'system-pro';
     if (path.includes('/settings/system-logs')) return 'system-logs';
     // Generic /settings/system fallback must come AFTER specific system-* paths
     // because /settings/system-logs contains /settings/system as a substring
@@ -988,17 +980,11 @@ const Settings: Component<SettingsProps> = (props) => {
             iconProps: { strokeWidth: 2 },
           },
           {
-            id: 'system-pro',
-            label: 'Pulse Pro',
-            icon: PulseLogoIcon,
-          },
-          {
             id: 'reporting',
             label: 'Reporting',
             icon: FileText,
             iconProps: { strokeWidth: 2 },
             features: ['advanced_reporting'],
-            badge: 'Pro',
           },
           {
             id: 'system-logs',
@@ -2383,11 +2369,6 @@ const Settings: Component<SettingsProps> = (props) => {
                                 <item.icon class="w-4 h-4" {...(item.iconProps || {})} />
                                 <Show when={!sidebarCollapsed()}>
                                   <span class="truncate">{item.label}</span>
-                                  <Show when={item.badge && !isPro()}>
-                                    <span class="ml-auto px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-500 text-white rounded-md shadow-sm">
-                                      {item.badge}
-                                    </span>
-                                  </Show>
                                 </Show>
                               </button>
                             );
@@ -3527,11 +3508,6 @@ const Settings: Component<SettingsProps> = (props) => {
                   <AISettings />
                   <AICostDashboard />
                 </div>
-              </Show>
-
-              {/* Pulse Pro License Tab */}
-              <Show when={activeTab() === 'system-pro'}>
-                <ProLicensePanel />
               </Show>
 
               {/* API Access */}

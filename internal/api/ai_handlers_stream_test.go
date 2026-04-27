@@ -55,7 +55,7 @@ func newTestAISettingsHandlerWithService(t *testing.T) *AISettingsHandler {
 	return handler
 }
 
-func TestHandleExecuteStream_LicenseRequired(t *testing.T) {
+func TestHandleExecuteStream_AutofixDoesNotRequireLicense(t *testing.T) {
 	withEnv(t, "PULSE_MOCK_MODE", "true", func() {
 		handler := newTestAISettingsHandlerWithService(t)
 		handler.legacyAIService.SetLicenseChecker(stubLicenseChecker{allow: false})
@@ -65,11 +65,8 @@ func TestHandleExecuteStream_LicenseRequired(t *testing.T) {
 		rec := httptest.NewRecorder()
 		handler.HandleExecuteStream(rec, req)
 
-		if rec.Code != http.StatusPaymentRequired {
-			t.Fatalf("expected payment required, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "license_required") {
-			t.Fatalf("expected license error body")
+		if rec.Code == http.StatusPaymentRequired {
+			t.Fatalf("autofix stream should not require a license")
 		}
 	})
 }

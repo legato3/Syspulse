@@ -119,7 +119,7 @@ func TestTenantMiddleware_MultiTenantDisabled(t *testing.T) {
 	}
 }
 
-func TestTenantMiddleware_MultiTenantLicenseRequired(t *testing.T) {
+func TestTenantMiddleware_MultiTenantDoesNotRequireLicense(t *testing.T) {
 	orig := IsMultiTenantEnabled()
 	SetMultiTenantEnabled(true)
 	t.Cleanup(func() { SetMultiTenantEnabled(orig) })
@@ -128,13 +128,18 @@ func TestTenantMiddleware_MultiTenantLicenseRequired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-Pulse-Org-ID", "tenant-2")
 	rec := httptest.NewRecorder()
+	called := false
 
 	mw.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("next handler should not be called")
+		called = true
+		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("expected 402, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !called {
+		t.Fatal("expected next handler to be called")
 	}
 }
 

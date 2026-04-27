@@ -7,6 +7,25 @@ const [licenseStatus, setLicenseStatus] = createSignal<LicenseStatus | null>(nul
 const [loading, setLoading] = createSignal(false);
 const [loaded, setLoaded] = createSignal(false);
 
+const ALL_FEATURES = [
+    'ai_patrol',
+    'ai_alerts',
+    'ai_autofix',
+    'kubernetes_ai',
+    'agent_profiles',
+    'update_alerts',
+    'sso',
+    'advanced_sso',
+    'rbac',
+    'audit_logging',
+    'advanced_reporting',
+    'long_term_metrics',
+    'multi_user',
+    'white_label',
+    'multi_tenant',
+    'unlimited',
+];
+
 /**
  * Load the license status from the server.
  */
@@ -23,11 +42,11 @@ export async function loadLicenseStatus(force = false): Promise<void> {
         logger.error('[licenseStore] Failed to load license status', err);
         // Fallback to free tier on error to avoid breaking UI
         setLicenseStatus({
-            valid: false,
+            valid: true,
             tier: 'free',
             is_lifetime: false,
             days_remaining: 0,
-            features: ['update_alerts', 'sso', 'ai_patrol'],
+            features: ALL_FEATURES,
         });
         setLoaded(true);
     } finally {
@@ -36,11 +55,11 @@ export async function loadLicenseStatus(force = false): Promise<void> {
 }
 
 /**
- * Helper to check if the current license is Pulse Pro (any paid tier).
+ * Helper retained for components that previously hid paid badges.
  */
 export const isPro = createMemo(() => {
     const current = licenseStatus();
-    return Boolean(current?.valid && current.tier !== 'free');
+    return Boolean(current?.features.length);
 });
 
 /**
@@ -49,7 +68,7 @@ export const isPro = createMemo(() => {
  */
 export function hasFeature(feature: string): boolean {
     const current = licenseStatus();
-    if (!current) return false;
+    if (!current) return ALL_FEATURES.includes(feature);
     return current.features.includes(feature);
 }
 

@@ -2579,7 +2579,7 @@ func TestAIChatEndpointsRequireAIChatScope(t *testing.T) {
 	}
 }
 
-func TestAuditEndpointsRequireLicenseFeature(t *testing.T) {
+func TestAuditEndpointsDoNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "audit-license-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeSettingsRead}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2589,12 +2589,12 @@ func TestAuditEndpointsRequireLicenseFeature(t *testing.T) {
 	req.Header.Set("X-API-Token", rawToken)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("expected 402 for missing audit logging license, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected audit endpoint to be accessible without license, got %d", rec.Code)
 	}
 }
 
-func TestAuditVerifyRequiresLicenseFeature(t *testing.T) {
+func TestAuditVerifyDoesNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "audit-verify-license-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeSettingsRead}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2604,12 +2604,12 @@ func TestAuditVerifyRequiresLicenseFeature(t *testing.T) {
 	req.Header.Set("X-API-Token", rawToken)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("expected 402 for missing audit logging license, got %d", rec.Code)
+	if rec.Code == http.StatusPaymentRequired {
+		t.Fatalf("audit verification should not require a license")
 	}
 }
 
-func TestReportingEndpointsRequireLicenseFeature(t *testing.T) {
+func TestReportingEndpointsDoNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "reporting-license-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeSettingsRead}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2625,13 +2625,13 @@ func TestReportingEndpointsRequireLicenseFeature(t *testing.T) {
 		req.Header.Set("X-API-Token", rawToken)
 		rec := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusPaymentRequired {
-			t.Fatalf("expected 402 for missing reporting license on %s, got %d", path, rec.Code)
+		if rec.Code == http.StatusPaymentRequired {
+			t.Fatalf("reporting endpoint should not require a license on %s", path)
 		}
 	}
 }
 
-func TestRBACEndpointsRequireLicenseFeature(t *testing.T) {
+func TestRBACEndpointsDoNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "rbac-license-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeSettingsRead}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2647,13 +2647,13 @@ func TestRBACEndpointsRequireLicenseFeature(t *testing.T) {
 		req.Header.Set("X-API-Token", rawToken)
 		rec := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusPaymentRequired {
-			t.Fatalf("expected 402 for missing RBAC license on %s, got %d", path, rec.Code)
+		if rec.Code == http.StatusPaymentRequired {
+			t.Fatalf("RBAC endpoint should not require a license on %s", path)
 		}
 	}
 }
 
-func TestRBACMutationsRequireLicenseFeature(t *testing.T) {
+func TestRBACMutationsDoNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "rbac-license-mutation-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeSettingsRead}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2676,13 +2676,13 @@ func TestRBACMutationsRequireLicenseFeature(t *testing.T) {
 		req.Header.Set("X-API-Token", rawToken)
 		rec := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusPaymentRequired {
-			t.Fatalf("expected 402 for missing RBAC license on %s %s, got %d", tc.method, tc.path, rec.Code)
+		if rec.Code == http.StatusPaymentRequired {
+			t.Fatalf("RBAC mutation should not require a license on %s %s", tc.method, tc.path)
 		}
 	}
 }
 
-func TestAuditWebhookRequiresLicenseFeature(t *testing.T) {
+func TestAuditWebhookDoesNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "audit-webhook-license-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeSettingsRead}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2692,8 +2692,8 @@ func TestAuditWebhookRequiresLicenseFeature(t *testing.T) {
 	req.Header.Set("X-API-Token", rawToken)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("expected 402 for missing audit logging license, got %d", rec.Code)
+	if rec.Code == http.StatusPaymentRequired {
+		t.Fatalf("audit webhook should not require a license")
 	}
 }
 
@@ -2743,7 +2743,7 @@ func TestSecurityTokensWriteRequiresSettingsWriteScope(t *testing.T) {
 	}
 }
 
-func TestAgentProfilesRequireLicenseFeature(t *testing.T) {
+func TestAgentProfilesDoNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "profiles-license-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeSettingsWrite}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2753,12 +2753,12 @@ func TestAgentProfilesRequireLicenseFeature(t *testing.T) {
 	req.Header.Set("X-API-Token", rawToken)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("expected 402 for missing agent profiles license, got %d", rec.Code)
+	if rec.Code == http.StatusPaymentRequired {
+		t.Fatalf("agent profiles should not require a license")
 	}
 }
 
-func TestAILicensedEndpointsRequireLicenseFeature(t *testing.T) {
+func TestAILicensedEndpointsDoNotRequireLicenseFeature(t *testing.T) {
 	rawToken := "ai-license-token-123.12345678"
 	record := newTokenRecord(t, rawToken, []string{config.ScopeAIExecute}, nil)
 	cfg := newTestConfigWithTokens(t, record)
@@ -2775,8 +2775,8 @@ func TestAILicensedEndpointsRequireLicenseFeature(t *testing.T) {
 		req.Header.Set("X-API-Token", rawToken)
 		rec := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusPaymentRequired {
-			t.Fatalf("expected 402 for missing AI license on %s, got %d", path, rec.Code)
+		if rec.Code == http.StatusPaymentRequired {
+			t.Fatalf("AI endpoint should not require a license on %s", path)
 		}
 	}
 }

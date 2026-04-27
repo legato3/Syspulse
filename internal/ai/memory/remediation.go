@@ -49,7 +49,7 @@ type RemediationRecord struct {
 	Duration     time.Duration `json:"duration,omitempty"`   // How long until resolved
 	Note         string        `json:"note,omitempty"`       // Optional user/AI note
 	Automatic    bool          `json:"automatic"`            // Was this triggered automatically by AI
-	Rollback     *RollbackInfo `json:"rollback,omitempty"`   // Rollback information (Pro feature)
+	Rollback     *RollbackInfo `json:"rollback,omitempty"`   // Rollback information
 	IsRollback   bool          `json:"isRollback,omitempty"` // True if this is a rollback of another action
 	RollbackOf   string        `json:"rollbackOf,omitempty"` // ID of original action if this is a rollback
 }

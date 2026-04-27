@@ -59,10 +59,10 @@ func TestTenantMiddleware_Enforcement_Permanent(t *testing.T) {
 			expectedStatus: http.StatusNotImplemented,
 		},
 		{
-			name:           "Tenant - Flag Enabled - No License - 402",
+			name:           "Tenant - Flag Enabled - No License - OK",
 			orgID:          "acme-corp",
 			flagEnabled:    true,
-			expectedStatus: http.StatusPaymentRequired,
+			expectedStatus: http.StatusOK,
 		},
 	}
 

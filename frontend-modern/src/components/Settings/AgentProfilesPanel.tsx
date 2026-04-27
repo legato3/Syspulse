@@ -1,10 +1,8 @@
 import { Component, createSignal, createMemo, onMount, Show, For } from 'solid-js';
 import { useWebSocket } from '@/App';
-import { Card } from '@/components/shared/Card';
 import SettingsPanel from '@/components/shared/SettingsPanel';
 import { AgentProfilesAPI, type AgentProfile, type AgentProfileAssignment, type ProfileSuggestion } from '@/api/agentProfiles';
 import { AIAPI } from '@/api/ai';
-import { LicenseAPI } from '@/api/license';
 import { notificationStore } from '@/stores/notifications';
 import { logger } from '@/utils/logger';
 import { formatRelativeTime } from '@/utils/format';
@@ -13,7 +11,6 @@ import { KNOWN_SETTINGS, type SelectSetting, type StringSetting } from './agentP
 import Plus from 'lucide-solid/icons/plus';
 import Pencil from 'lucide-solid/icons/pencil';
 import Trash2 from 'lucide-solid/icons/trash-2';
-import Crown from 'lucide-solid/icons/crown';
 import Users from 'lucide-solid/icons/users';
 import Settings from 'lucide-solid/icons/settings';
 import Lightbulb from 'lucide-solid/icons/lightbulb';
@@ -21,10 +18,6 @@ import Lightbulb from 'lucide-solid/icons/lightbulb';
 
 export const AgentProfilesPanel: Component = () => {
     const { state } = useWebSocket();
-
-    // License state
-    const [hasFeature, setHasFeature] = createSignal(false);
-    const [checkingLicense, setCheckingLicense] = createSignal(true);
 
     // AI state - only show AI features if enabled
     const [aiAvailable, setAiAvailable] = createSignal(false);
@@ -104,18 +97,8 @@ export const AgentProfilesPanel: Component = () => {
         }
     };
 
-    // Check license and AI availability on mount
+    // Check AI availability on mount
     onMount(async () => {
-        try {
-            const features = await LicenseAPI.getFeatures();
-            setHasFeature(features.features?.['agent_profiles'] === true);
-        } catch (err) {
-            logger.error('Failed to check license', err);
-            setHasFeature(false);
-        } finally {
-            setCheckingLicense(false);
-        }
-
         // Check if AI is available (enabled and configured) - silently fail if not
         try {
             const aiSettings = await AIAPI.getSettings();
@@ -125,11 +108,7 @@ export const AgentProfilesPanel: Component = () => {
             setAiAvailable(false);
         }
 
-        if (hasFeature()) {
-            await loadData();
-        } else {
-            setLoading(false);
-        }
+        await loadData();
     });
 
     // Open modal for creating a new profile
@@ -245,50 +224,8 @@ export const AgentProfilesPanel: Component = () => {
         }
     };
 
-    // License gate - using Show components for proper SolidJS reactivity
-    // (early returns don't re-render when signals change in SolidJS)
     return (
-        <Show
-            when={!checkingLicense()}
-            fallback={
-                <Card padding="lg">
-                    <div class="flex items-center justify-center py-8">
-                        <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500" />
-                        <span class="ml-3 text-gray-600 dark:text-gray-400">Checking license...</span>
-                    </div>
-                </Card>
-            }
-        >
-            <Show
-                when={hasFeature()}
-                fallback={
-                    <Card padding="lg" class="space-y-4">
-                        <div class="flex items-center gap-3">
-                            <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/30">
-                                <Crown class="w-5 h-5 text-amber-600 dark:text-amber-400" />
-                            </div>
-                            <div>
-                                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">Agent Profiles</h3>
-                                <p class="text-sm text-gray-600 dark:text-gray-400">Pro feature</p>
-                            </div>
-                        </div>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">
-                            Create reusable configuration profiles for your agents. Manage settings like Docker monitoring,
-                            logging levels, and reporting intervals from a central location.
-                        </p>
-                        <a
-                            href="https://pulserelay.pro/"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-amber-600"
-                        >
-                            <Crown class="w-4 h-4" />
-                            Upgrade to Pro
-                        </a>
-                    </Card>
-                }
-            >
-                <div class="space-y-6">
+        <div class="space-y-6">
                     {/* Profiles Section */}
                     <SettingsPanel
                         title="Configuration Profiles"
@@ -673,9 +610,7 @@ export const AgentProfilesPanel: Component = () => {
                             onSuggestionAccepted={handleSuggestionAccepted}
                         />
                     </Show>
-                </div>
-            </Show>
-        </Show>
+        </div>
     );
 };
 

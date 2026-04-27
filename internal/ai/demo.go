@@ -428,8 +428,7 @@ EVIDENCE: PermitRootLogin yes found in config
 			"To enable full Pulse Assistant capabilities in your own Pulse installation:\n" +
 			"1. Go to **Settings → Pulse Assistant**\n" +
 			"2. Add your API key (Anthropic, OpenAI, DeepSeek, or Ollama)\n" +
-			"3. Enable Pulse Assistant features\n\n" +
-			"*Visit [pulserelay.pro](https://pulserelay.pro) to get Pulse Pro!*"
+			"3. Enable Pulse Assistant features"
 	}
 
 	return &ExecuteResponse{

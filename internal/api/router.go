@@ -599,7 +599,7 @@ func (r *Router) setupRoutes() {
 
 	// Registration token routes removed - feature deprecated
 
-	// License routes (Pulse Pro)
+	// License compatibility routes
 	r.mux.HandleFunc("/api/license/status", RequireAdmin(r.config, r.licenseHandlers.HandleLicenseStatus))
 	r.mux.HandleFunc("/api/license/features", RequireAuth(r.config, r.licenseHandlers.HandleLicenseFeatures))
 	r.mux.HandleFunc("/api/license/activate", RequireAdmin(r.config, RequireScope(config.ScopeSettingsWrite, r.licenseHandlers.HandleActivateLicense)))
@@ -1507,7 +1507,7 @@ func (r *Router) setupRoutes() {
 	// Note: The actual service is wired up later via SetDiscoveryService
 	r.discoveryHandlers = NewDiscoveryHandlers(nil, r.config)
 
-	// Wire license checker for Pro feature gating (AI Patrol, Alert Analysis, Auto-Fix)
+	// Wire license checker for compatibility.
 	r.aiSettingsHandler.SetLicenseHandlers(r.licenseHandlers)
 	// Wire model change callback to restart AI chat service when model is changed
 	r.aiSettingsHandler.SetOnModelChange(func() {
@@ -1530,7 +1530,7 @@ func (r *Router) setupRoutes() {
 	r.configProfileHandler.SetAIHandler(r.aiHandler)
 	// Wire chat handler to AI settings handler for investigation orchestration
 	r.aiSettingsHandler.SetChatHandler(r.aiHandler)
-	// Wire license checker for alert manager Pro features (Update Alerts)
+	// Wire license checker for alert manager compatibility.
 	if r.monitor != nil {
 		alertMgr := r.monitor.GetAlertManager()
 		if alertMgr != nil {
@@ -1633,7 +1633,7 @@ func (r *Router) setupRoutes() {
 		}
 	})))
 
-	// Investigation endpoints - viewing and reinvestigation are free, fix execution (reapprove) requires Pro
+	// Investigation endpoints.
 	// SECURITY: Require ai:execute scope to prevent low-privilege tokens from reading investigation details
 	r.mux.HandleFunc("/api/ai/findings/", RequireAuth(r.config, RequireScope(config.ScopeAIExecute, func(w http.ResponseWriter, req *http.Request) {
 		path := req.URL.Path
@@ -1645,7 +1645,6 @@ func (r *Router) setupRoutes() {
 		case strings.HasSuffix(path, "/reinvestigate"):
 			r.aiSettingsHandler.HandleReinvestigateFinding(w, req)
 		case strings.HasSuffix(path, "/reapprove"):
-			// Fix execution requires Pro license
 			RequireLicenseFeature(r.licenseHandlers, license.FeatureAIAutoFix, r.aiSettingsHandler.HandleReapproveInvestigationFix)(w, req)
 		default:
 			http.Error(w, "Not found", http.StatusNotFound)
@@ -5795,23 +5794,6 @@ func (r *Router) handleMetricsHistory(w http.ResponseWriter, req *http.Request) 
 				}
 			}
 		}
-	}
-
-	// Enforce license limits: 7d free, 30d/90d require Pro
-	// Returns 402 Payment Required for unlicensed long-term requests
-	maxFreeDuration := 7 * 24 * time.Hour
-	// Check license for long-term metrics
-	if duration > maxFreeDuration && !r.licenseHandlers.Service(req.Context()).HasFeature(license.FeatureLongTermMetrics) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusPaymentRequired)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":       "license_required",
-			"message":     "Long-term metrics history (30d/90d) requires a Pulse Pro license",
-			"feature":     license.FeatureLongTermMetrics,
-			"upgrade_url": "https://pulserelay.pro/",
-			"max_free":    "7d",
-		})
-		return
 	}
 
 	end := time.Now()

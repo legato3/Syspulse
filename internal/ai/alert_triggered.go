@@ -241,7 +241,7 @@ func (a *AlertTriggeredAnalyzer) analyzeResourceByAlert(ctx context.Context, ale
 }
 
 // analyzeUpdateAlertFromAlert provides AI-powered update risk assessment for container updates
-// This is a Pro feature that helps users prioritize and schedule updates intelligently
+// This helps users prioritize and schedule updates intelligently.
 func (a *AlertTriggeredAnalyzer) analyzeUpdateAlertFromAlert(_ context.Context, alert *alerts.Alert) []*Finding {
 	// Handle nil inputs gracefully
 	if alert == nil {
