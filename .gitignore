@@ -76,7 +76,6 @@ scripts/macos/dist/
 internal/api/frontend-modern/
 
 # AI assistant files (local development environment docs)
-CLAUDE.md
 .claude*
 claude-*
 fix-claude-*
