@@ -62,6 +62,7 @@ Pulse Pro unlocks **Auto-Fix and advanced AI analysis** — **Pulse Patrol is av
 
 ## 💻 Development
 
+- **[Running Locally](LOCAL_DEVELOPMENT.md)** – Build and run Pulse from source on a local machine.
 - **[API Reference](API.md)** – Complete REST API documentation.
 - **[Architecture](../ARCHITECTURE.md)** – System design and component interaction.
 - **[Contributing](../CONTRIBUTING.md)** – How to contribute to Pulse.

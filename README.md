@@ -75,6 +75,7 @@ Access the dashboard at `http://<your-ip>:7655`.
 ## 📚 Documentation
 
 - **[Installation Guide](docs/INSTALL.md)**: Detailed instructions for Docker, Kubernetes, and bare metal.
+- **[Running Locally](docs/LOCAL_DEVELOPMENT.md)**: Build and run Pulse from source for development.
 - **[Configuration](docs/CONFIGURATION.md)**: Setup authentication, notifications, and advanced settings.
 - **[Security](SECURITY.md)**: Learn about Pulse's security model and best practices.
 - **[API Reference](docs/API.md)**: Integrate Pulse with your own tools.
