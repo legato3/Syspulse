@@ -24,8 +24,8 @@ interface RingBuffer {
 
 // Configuration
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (age filter for all sparkline ranges)
-const SAMPLE_INTERVAL_MS = 30 * 1000;   // 30 seconds
-const MAX_POINTS = 2000; // Ring buffer capacity: holds seed data + ~12h of live updates
+const SAMPLE_INTERVAL_MS = 5 * 1000;   // 5 seconds for live sparkline updates
+const MAX_POINTS = 2000; // Ring buffer capacity: holds seed data + ~2.7h of 5s live updates
 const STORAGE_KEY = 'pulse_metrics_history';
 const STORAGE_VERSION = 4; // Bumped: reduced buffer from 86400 to 2000 points
 
@@ -62,6 +62,26 @@ const [metricsVersion, setMetricsVersion] = createSignal(0);
  */
 export function getMetricsVersion(): number {
   return metricsVersion();
+}
+
+let versionUpdateQueued = false;
+
+/**
+ * Notify chart components that in-memory metric history changed.
+ *
+ * A sampler tick can record many resources, so this coalesces all writes from
+ * the same event-loop turn into one reactive update.
+ */
+function queueMetricsVersionUpdate(): void {
+  if (versionUpdateQueued) {
+    return;
+  }
+
+  versionUpdateQueued = true;
+  queueMicrotask(() => {
+    versionUpdateQueued = false;
+    setMetricsVersion(v => v + 1);
+  });
 }
 
 /**
@@ -233,6 +253,8 @@ export function recordMetric(
 
   pushToRingBuffer(ring, snapshot);
 
+  queueMetricsVersionUpdate();
+
   // Save to localStorage periodically (debounced)
   debouncedSave();
 }
@@ -255,7 +277,7 @@ let seedingPromise: Promise<void> | null = null;
 
 /**
  * Seed metrics history from backend historical data.
- * This provides immediate trend data instead of waiting for 30s samples.
+ * This provides immediate trend data instead of waiting for live client samples.
  * Called automatically when switching to sparklines/trends view.
  */
 export async function seedFromBackend(range: TimeRange = '1h'): Promise<void> {

@@ -1,7 +1,7 @@
 /**
  * Metrics Sampler
  *
- * Dedicated 30-second ticker that samples metrics from WebSocket state
+ * Dedicated ticker that samples metrics from WebSocket state
  * and records them to the metrics history store.
  *
  * This decouples metric sampling from the WebSocket message handler,
@@ -15,7 +15,7 @@ import { getMetricsViewMode } from './metricsViewMode';
 import { buildMetricKey } from '@/utils/metricsKeys';
 import { logger } from '@/utils/logger';
 
-const SAMPLE_INTERVAL_MS = 30 * 1000; // 30 seconds
+const SAMPLE_INTERVAL_MS = 5 * 1000; // Keep sparklines moving with live WebSocket state
 
 let isRunning = false;
 
@@ -154,4 +154,3 @@ export function startMetricsSampler(): void {
     sampleMetrics();
   }
 }
-
